@@ -142,6 +142,49 @@ def get_radar_metrics(position: str, available_cols: list) -> list:
                 break
     return valid[:5]
 
+def get_position_form_metric(pos_tag: str, df_p: pd.DataFrame):
+    """
+    Selects role-calibrated multi-season KPIs for Form vs. Baseline.
+    Returns (pd.Series of metric values, display title string).
+    """
+    pos_tag = str(pos_tag).upper()
+
+    if "GK" in pos_tag:
+        has_psxg = "psxg_net_per90" in df_p.columns and df_p["psxg_net_per90"].abs().sum() > 0
+        if has_psxg:
+            vals = pd.to_numeric(df_p.get("psxg_net_per90", 0), errors="coerce").fillna(0)
+            return vals, "Net PSxG / 90 (Shot Stopping Delta)"
+        vals = pd.to_numeric(df_p.get("saves_per90", 0), errors="coerce").fillna(0)
+        return vals, "Saves / 90"
+
+    elif "CB" in pos_tag:
+        tkl = pd.to_numeric(df_p.get("tkl_per90", 0), errors="coerce").fillna(0)
+        int_c = pd.to_numeric(df_p.get("int_per90", 0), errors="coerce").fillna(0)
+        clr = pd.to_numeric(df_p.get("clr_per90", 0), errors="coerce").fillna(0)
+        if clr.sum() > 0:
+            return tkl + int_c + clr, "Defensive Interventions / 90 (Tkl+Int+Clr)"
+        return tkl + int_c, "Defensive Actions / 90 (Tackles + Interceptions)"
+
+    elif "CDM" in pos_tag:
+        tkl = pd.to_numeric(df_p.get("tkl_per90", 0), errors="coerce").fillna(0)
+        int_c = pd.to_numeric(df_p.get("int_per90", 0), errors="coerce").fillna(0)
+        return tkl + int_c, "Ball-Winning Actions / 90 (Tackles + Interceptions)"
+
+    elif "FULLBACK" in pos_tag or pos_tag == "CM":
+        prgp = pd.to_numeric(df_p.get("prgp_per90", 0), errors="coerce").fillna(0)
+        prgc = pd.to_numeric(df_p.get("prgc_per90", 0), errors="coerce").fillna(0)
+        return prgp + prgc, "Progression Volume / 90 (PrgP + PrgC)"
+
+    elif "CAM" in pos_tag:
+        xa = pd.to_numeric(df_p.get("xag_per90", 0), errors="coerce").fillna(0)
+        prgp = pd.to_numeric(df_p.get("prgp_per90", 0), errors="coerce").fillna(0)
+        return xa + prgp, "Playmaking Output / 90 (xA + PrgP)"
+
+    else:  # ST, WINGER, Forward roles
+        xg = pd.to_numeric(df_p.get("xg_per90", 0), errors="coerce").fillna(0)
+        xa = pd.to_numeric(df_p.get("xag_per90", 0), errors="coerce").fillna(0)
+        return xg + xa, "Goal Contribution / 90 (xG + xA)"
+
 # --- 2. PRESENTATION HELPERS ---
 def initials(name: str) -> str:
     parts = [p for p in str(name).split() if p]
@@ -987,26 +1030,27 @@ with tab1:
             )
 
         with col_form:
-            st.markdown('<div class="panel-title" style="margin-bottom: 2px;">Form vs. Baseline · Multi-Season xG + xA / 90</div>', unsafe_allow_html=True)
+            target_pos = str(target_row.get("pos_clean", "MF")).upper()
             if not df_timeline.empty and "season" in df_timeline.columns:
                 player_history = df_timeline[df_timeline["player"].str.lower() == str(target).lower()].copy()
 
                 if not player_history.empty and len(player_history) > 1:
                     player_history = player_history.sort_values(by="season")
-                    xg_series = pd.to_numeric(player_history.get("xg_per90", 0), errors="coerce").fillna(0)
-                    xa_series = pd.to_numeric(player_history.get("xag_per90", 0), errors="coerce").fillna(0)
-                    player_history["xg_xa"] = xg_series + xa_series
+                    series_values, metric_title = get_position_form_metric(target_pos, player_history)
+                    player_history["form_metric"] = series_values
+
+                    st.markdown(f'<div class="panel-title" style="margin-bottom: 2px;">Form vs. Baseline · Multi-Season {metric_title}</div>', unsafe_allow_html=True)
 
                     fig_timeline = go.Figure()
                     fig_timeline.add_trace(go.Scatter(
                         x=player_history["season"],
-                        y=player_history["xg_xa"],
+                        y=player_history["form_metric"],
                         mode="lines+markers",
                         line=dict(color=MINT, width=2.5, shape="spline", smoothing=0.3),
                         marker=dict(size=8, color=INK, line=dict(color=MINT, width=2)),
                         fill="tozeroy",
                         fillcolor="rgba(53, 224, 140, 0.12)",
-                        hovertemplate="<b>%{x}</b><br>xG + xA / 90: %{y:.2f}<extra></extra>"
+                        hovertemplate=f"<b>%{{x}}</b><br>{metric_title}: %{{y:.2f}}<extra></extra>"
                     ))
 
                     fig_timeline.update_layout(
@@ -1020,6 +1064,7 @@ with tab1:
                     )
                     st.plotly_chart(fig_timeline, use_container_width=True, config={'displayModeBar': False})
                 else:
+                    st.markdown('<div class="panel-title" style="margin-bottom: 2px;">Form vs. Baseline · Multi-Season Output</div>', unsafe_allow_html=True)
                     st.markdown(
                         '<div style="height: 160px; display: grid; place-items: center; border: 1px dashed var(--line); border-radius: 10px; color: var(--text-faint); font-size: 0.85rem; margin-top: 8px;">'
                         'Insufficient multi-season history to plot trend'
@@ -1027,6 +1072,7 @@ with tab1:
                         unsafe_allow_html=True
                     )
             else:
+                st.markdown('<div class="panel-title" style="margin-bottom: 2px;">Form vs. Baseline · Multi-Season Output</div>', unsafe_allow_html=True)
                 st.markdown(
                     '<div style="height: 160px; display: grid; place-items: center; border: 1px dashed var(--line); border-radius: 10px; color: var(--text-faint); font-size: 0.85rem; margin-top: 8px;">'
                     'Run valuation_model.py to initialize player_timeline_db.csv'
@@ -1173,3 +1219,20 @@ with tab3:
 
                     fig_h2h.update_layout(polar=dict(radialaxis=dict(visible=False, range=[0, 100])), legend=dict(orientation="h", y=1.14, xanchor="center", x=0.5))
                     st.plotly_chart(apply_custom_theme(fig_h2h), use_container_width=True)
+
+# --- Application Footer ---
+st.markdown("---")
+st.markdown(
+    """
+    <div style="text-align: center; padding: 25px 0 10px 0; font-family: -apple-system, BlinkMacSystemFont, sans-serif;">
+        <span style="color: #6b7280; font-size: 0.85rem; letter-spacing: 0.02em;">
+            Engineered & Maintained by 
+            <a href="https://www.linkedin.com/in/sujalsharmaa/" target="_blank" style="color: #00ff87; text-decoration: none; font-weight: 600; border-bottom: 1px dotted #00ff87;">
+                Sujal Sharma
+            </a>
+            &nbsp;•&nbsp; Automated MLOps & System Fit Architecture
+        </span>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
