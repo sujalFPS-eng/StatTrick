@@ -45,7 +45,10 @@ def match_clusters_to_archetypes(centroids: pd.DataFrame, active_features: list)
         ref_vectors.append(vec)
 
     ref_matrix = np.array(ref_vectors)
-    centroid_matrix = centroids[active_features].values
+    # .reindex() instead of a bare [active_features] selection: any feature
+    # missing from centroids (e.g. an environment/version edge case) is
+    # filled with 0.0 rather than raising KeyError.
+    centroid_matrix = centroids.reindex(columns=active_features, fill_value=0.0).values
     sim_matrix = cosine_similarity(centroid_matrix, ref_matrix)
 
     matched_labels = {}
@@ -95,7 +98,7 @@ class SystemFitEngine:
         df = self.df_players.copy()
         active_features = [f for f in STYLE_FEATURES if f in df.columns and df[f].std() > 1e-4]
         qual_players = df[df["min"] >= 400].copy()
-        
+
         squad_counts = qual_players.groupby("squad")["player"].count()
         valid_squads = squad_counts[squad_counts >= 7].index
         qual_players = qual_players[qual_players["squad"].isin(valid_squads)].copy()
@@ -112,8 +115,13 @@ class SystemFitEngine:
             return pd.DataFrame([{"squad": "Unknown", "league": "Unknown", "tactical_archetype": "Balanced Mid-Block & Pragmatic"}])
 
         club_agg = pd.DataFrame(squad_records)
-        scaled_matrix = self.scaler.fit_transform(club_agg[active_features])
-        
+
+        # .reindex() instead of a bare [active_features] selection: guards
+        # against the exact same KeyError if a feature column is absent or
+        # ends up misaligned after the groupby/aggregation step above.
+        feature_frame = club_agg.reindex(columns=active_features, fill_value=0.0)
+        scaled_matrix = self.scaler.fit_transform(feature_frame)
+
         n_clusters = min(4, len(club_agg))
         kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=20)
         club_agg["cluster_id"] = kmeans.fit_predict(scaled_matrix)
@@ -143,7 +151,7 @@ class SystemFitEngine:
         for feature in STYLE_FEATURES:
             p_val = player_row.get(feature, 0.0) if feature in player_row.index else 0.0
             s_val = squad_row.get(feature, 0.0) if feature in squad_row.index else 0.0
-            
+
             p_vec.append(float(p_val) if not pd.isna(p_val) else 0.0)
             s_vec.append(float(s_val) if not pd.isna(s_val) else 0.0)
 
