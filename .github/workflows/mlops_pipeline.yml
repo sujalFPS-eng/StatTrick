@@ -1,0 +1,45 @@
+name: StatTrick MLOps Engine
+
+on:
+  schedule:
+    # Runs automatically every Monday at 04:00 UTC
+    - cron: '0 4 * * 1'
+  workflow_dispatch: # Allows you to click a "Run Workflow" button manually in GitHub
+
+jobs:
+  retrain-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Grants the bot permission to push data back to your repo
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python Environment
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11' # Match this to your local Python version
+        cache: 'pip'
+
+    - name: Install Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Stage 1 - Run XGBoost Valuation Pipeline
+      run: python src/valuation_model.py
+
+    - name: Stage 2 - Rebuild O(1) Similarity Matrix
+      run: python src/build_matrix.py
+
+    - name: Stage 3 - Update K-Means Tactical Clusters
+      run: python src/system_fit.py
+
+    - name: Commit and Push Updated Artifacts
+      run: |
+        git config --local user.name "github-actions[bot]"
+        git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        git add data/
+        # Checks if data changed. If yes, commits and pushes. If no, exits gracefully.
+        git diff --quiet && git diff --staged --quiet || (git commit -m "🤖 MLOps: Automated model retraining and data artifact sync" && git push)
