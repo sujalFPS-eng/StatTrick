@@ -33,7 +33,6 @@ def classify_tactical_role(row: pd.Series) -> str:
 
     # 1. Defenders (Fullbacks vs Center-Backs)
     if "DF" in raw_pos and "FW" not in raw_pos:
-        # Fullbacks/Wingbacks exhibit progressive carry and pass volume
         if (
             any(tag in raw_pos for tag in ["LB", "RB", "WB"])
             or row.get("prgc_per90", 0) >= 1.2
@@ -44,17 +43,14 @@ def classify_tactical_role(row: pd.Series) -> str:
 
     # 2. Attackers (Strikers vs Wingers)
     if "FW" in raw_pos:
-        # Wide forwards / wingers with high ball carrying
         if any(tag in raw_pos for tag in ["LW", "RW", "LM", "RM"]) or row.get("prgc_per90", 0) >= 2.3:
             return "WINGER"
-        # Central attacking midfielders who occasionally line up as second strikers
         if "MF" in raw_pos and row.get("prgp_per90", 0) >= 4.0:
             return "CAM"
         return "ST"
 
     # 3. Midfielders (CAM vs CM vs CDM)
     if "MF" in raw_pos:
-        # CAM: High shot volume, creative metrics, or goal involvement
         if (
             row.get("sh_per90", 0) >= 1.6
             or row.get("xag_per90", 0) >= 0.14
@@ -62,12 +58,10 @@ def classify_tactical_role(row: pd.Series) -> str:
         ):
             return "CAM"
 
-        # CDM: Defensive shield prioritizing ball winning over final third involvement
         defensive_actions = row.get("tkl_per90", 0) + row.get("int_per90", 0)
         if defensive_actions >= 2.8 and row.get("sh_per90", 0) < 1.2:
             return "CDM"
 
-        # CM: Central / Box-to-Box controllers (balanced progression and defense)
         return "CM"
 
     return "CM"
@@ -94,13 +88,28 @@ def build_valuation_model():
         df_history = pd.concat(loaded, ignore_index=True) if loaded else pd.DataFrame()
 
     # 2. Load modern seasons (2024-2025 and 2025-2026)
-    df_2425 = clean_frame(pd.read_csv("data/fbref_2425.csv"))
-    df_2526 = clean_frame(pd.read_csv("data/fbref_2526.csv"))
-    df_2425["season"] = "2024-2025"
-    df_2526["season"] = "2025-2026"
+    try:
+        df_2425 = clean_frame(pd.read_csv("data/fbref_2425.csv"))
+        df_2425["season"] = "2024-2025"
+    except FileNotFoundError:
+        df_2425 = pd.DataFrame()
+        
+    try:
+        df_2526 = clean_frame(pd.read_csv("data/fbref_2526.csv"))
+        df_2526["season"] = "2025-2026"
+    except FileNotFoundError:
+        df_2526 = pd.DataFrame()
+
+    # 3. Load freshly scraped live data via SeleniumBase
+    try:
+        df_live = clean_frame(pd.read_csv("data/live_fbref_data.csv"))
+        df_live["season"] = "2026-2027"
+    except FileNotFoundError:
+        print("Live FBref data not found. Continuing with historical data only.")
+        df_live = pd.DataFrame()
 
     # Merge master timeline
-    dfs_to_concat = [d for d in [df_history, df_2425, df_2526] if not d.empty]
+    dfs_to_concat = [d for d in [df_history, df_2425, df_2526, df_live] if not d.empty]
     df_raw = clean_frame(pd.concat(dfs_to_concat, ignore_index=True))
 
     if "league" not in df_raw.columns:
@@ -108,7 +117,7 @@ def build_valuation_model():
 
     df_raw["min"] = pd.to_numeric(df_raw["min"], errors="coerce").fillna(0)
 
-    # 3. Standardize and Map Stat Column Aliases
+    # 4. Standardize and Map Stat Column Aliases
     alias_map = {
         "goals": "gls",
         "assists": "ast",
@@ -152,16 +161,17 @@ def build_valuation_model():
 
     stat_per90_cols = [f"{stat}_per90" for stat in raw_stats]
 
-    # 4. Time-Decay Weighting
+    # 5. Time-Decay Weighting (Shifted forward to account for the live scrape)
     season_weights = {
-        "2025-2026": 1.0,
-        "2024-2025": 0.85,
-        "2023-2024": 0.65,
-        "2023-24": 0.65,
-        "2022-2023": 0.45,
-        "2022-23": 0.45,
-        "2021-2022": 0.25,
-        "2021-22": 0.25,
+        "2026-2027": 1.0,
+        "2025-2026": 0.85,
+        "2024-2025": 0.65,
+        "2023-2024": 0.45,
+        "2023-24": 0.45,
+        "2022-2023": 0.25,
+        "2022-23": 0.25,
+        "2021-2022": 0.10,
+        "2021-22": 0.10,
     }
 
     if "season" in df_raw.columns:
@@ -179,13 +189,12 @@ def build_valuation_model():
     for col in stat_per90_cols:
         df_raw[f"{col}_weighted"] = df_raw[col] * df_raw["weighted_90s"]
         agg_dict[f"{col}_weighted"] = "sum"
-    os.makedirs("data", exist_ok=True)
-    df_raw.to_csv("data/player_timeline_db.csv", index=False)
+        
     # Save the un-aggregated timeline for the Form vs Baseline UI
     os.makedirs("data", exist_ok=True)
     df_raw.to_csv("data/player_timeline_db.csv", index=False)
     
-    # Existing grouping code...
+    # Generate unified player profiles
     player_agg = df_raw.groupby("player", as_index=False).agg(agg_dict)
 
     for col in stat_per90_cols:
@@ -198,7 +207,7 @@ def build_valuation_model():
 
     player_agg.drop(columns=["weighted_90s"], inplace=True)
 
-    # 5. Extract latest profile meta-attributes
+    # 6. Extract latest profile meta-attributes
     sort_col = "season" if "season" in df_raw.columns else "min"
     df_latest = df_raw.sort_values(sort_col, ascending=False).drop_duplicates(subset=["player"]).copy()
 
@@ -208,7 +217,7 @@ def build_valuation_model():
     df_fb = df_latest[available_meta].merge(player_agg, on="player", how="left")
     df_fb = df_fb[df_fb["min"] >= 1500].copy()
 
-    # 6. Load Transfermarkt Valuations & Contracts
+    # 7. Load Transfermarkt Valuations & Contracts (Static DB in repo)
     print("Loading Transfermarkt valuation and contract data...")
     df_tm = clean_frame(pd.read_csv("data/players.csv"))
 
@@ -243,7 +252,7 @@ def build_valuation_model():
     df_fb = df_fb[df_fb["actual_value_m"] > 0.5].copy()
     print(f"Calibrated dataset contains {len(df_fb)} qualified players.")
 
-    # 7. Clean Age and Apply Granular Tactical Roles
+    # 8. Clean Age and Apply Granular Tactical Roles
     if "age" in df_fb.columns:
         df_fb["age_clean"] = df_fb["age"].astype(str).str.split("-").str[0]
         df_fb["age_clean"] = pd.to_numeric(df_fb["age_clean"], errors="coerce").fillna(25.0)
@@ -253,7 +262,7 @@ def build_valuation_model():
     print("Classifying players into granular tactical roles...")
     df_fb["pos_clean"] = df_fb.apply(classify_tactical_role, axis=1)
 
-    # 8. Encode Features with Positional Indicators
+    # 9. Encode Features with Positional Indicators
     df_fb["raw_pos_clean"] = df_fb["pos_clean"]
     df_fb["raw_league"] = df_fb["league"]
 
@@ -281,7 +290,7 @@ def build_valuation_model():
         X, y_log, y_raw, test_size=0.2, random_state=42
     )
 
-    # Base Valuation Model
+    # 10. Base Valuation Model
     model = XGBRegressor(
         n_estimators=400,
         learning_rate=0.03,
