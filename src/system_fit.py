@@ -141,6 +141,9 @@ class SystemFitEngine:
         return club_agg
 
     def calculate_system_fit(self, player_name: str, target_squad: str) -> dict:
+        """
+        Evaluates player compatibility against a club's tactical demand vector.
+        """
         player_matches = self.df_players[self.df_players["player"] == player_name]
         squad_matches = self.club_profiles[self.club_profiles["squad"].str.lower() == target_squad.lower()]
 
@@ -150,12 +153,24 @@ class SystemFitEngine:
         player_row = player_matches.iloc[0]
         squad_row = squad_matches.iloc[0]
 
-        # Compare using common active features
-        active_features = [f for f in STYLE_FEATURES if f in self.df_players.columns and f in self.club_profiles.columns]
-        p_vec = player_row[active_features].fillna(0).values.reshape(1, -1)
-        s_vec = squad_row[active_features].fillna(0).values.reshape(1, -1)
+        # Safely extract vectors by ignoring missing columns (prevents KeyError)
+        p_vec = []
+        s_vec = []
+        
+        for feature in STYLE_FEATURES:
+            p_val = player_row.get(feature, 0.0) if feature in player_row.index else 0.0
+            s_val = squad_row.get(feature, 0.0) if feature in squad_row.index else 0.0
+            
+            p_vec.append(float(p_val) if not pd.isna(p_val) else 0.0)
+            s_vec.append(float(s_val) if not pd.isna(s_val) else 0.0)
+            
+        p_vec = np.array(p_vec).reshape(1, -1)
+        s_vec = np.array(s_vec).reshape(1, -1)
 
+        # Normalize via Cosine Similarity
         cos_sim = cosine_similarity(p_vec, s_vec)[0][0]
+
+        # Calibrate to 52% - 98.5% scale
         raw_score = ((cos_sim + 1.0) / 2.0) * 100.0
         fit_score = float(np.clip(np.round(raw_score, 1), 52.0, 98.5))
 
@@ -170,9 +185,9 @@ class SystemFitEngine:
 
         return {
             "fit_score": fit_score,
-            "archetype": squad_row["tactical_archetype"],
+            "archetype": squad_row.get("tactical_archetype", "Unknown"),
             "tier": tier,
-            "target_squad": squad_row["squad"]
+            "target_squad": squad_row.get("squad", target_squad)
         }
 
 
