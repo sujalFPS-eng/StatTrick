@@ -1,76 +1,71 @@
+# src/similarity_engine.py
+import os
 import pandas as pd
 import numpy as np
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics.pairwise import cosine_similarity
 
-
 class PlayerSimilarityEngine:
-    def __init__(self, data_path="data/master_scouting_db.csv"):
-        self.df = pd.read_csv(data_path)
-        self.df.columns = [c.lower() for c in self.df.columns]
-
-        # Standardize position column if needed
-        if "pos_clean" not in self.df.columns:
-            pos_cols = [c for c in self.df.columns if c.startswith("pos_clean_")]
-            if pos_cols:
-                self.df["pos_clean"] = self.df[pos_cols].idxmax(axis=1).str.replace("pos_clean_", "")
-            else:
-                self.df["pos_clean"] = "MF"
-
-        self.feature_cols = [
-            "xg_per90", "xag_per90", "gls_per90", "ast_per90",
-            "sh_per90", "sot_per90", "prgc_per90", "prgp_per90",
-            "tkl_per90", "int_per90", "clr_per90", "blk_per90",
-            "aer_won_per90", "saves_per90", "psxg_net_per90"
-        ]
-        self.feature_cols = [col for col in self.feature_cols if col in self.df.columns]
-
-        for col in self.feature_cols:
-            self.df[col] = pd.to_numeric(self.df[col], errors="coerce").fillna(0.0)
-
-        self.scaler = StandardScaler()
-        self.scaled_features = self.scaler.fit_transform(self.df[self.feature_cols])
-
-        # Positional Weight Matrix
-        self.weight_map = {
-            "FW": {"xg_per90": 2.0, "xag_per90": 1.2, "gls_per90": 2.5, "ast_per90": 1.0, "sh_per90": 1.5, "sot_per90": 1.5, "prgc_per90": 1.2, "prgp_per90": 0.8, "tkl_per90": 0.5, "int_per90": 0.5, "clr_per90": 0.2, "blk_per90": 0.2, "aer_won_per90": 1.0, "saves_per90": 0.0, "psxg_net_per90": 0.0},
-            "MF": {"xg_per90": 1.0, "xag_per90": 2.0, "gls_per90": 1.0, "ast_per90": 2.0, "sh_per90": 1.0, "sot_per90": 1.0, "prgc_per90": 1.8, "prgp_per90": 2.0, "tkl_per90": 1.2, "int_per90": 1.2, "clr_per90": 0.5, "blk_per90": 0.5, "aer_won_per90": 0.5, "saves_per90": 0.0, "psxg_net_per90": 0.0},
-            "DF": {"xg_per90": 0.5, "xag_per90": 0.5, "gls_per90": 0.5, "ast_per90": 0.5, "sh_per90": 0.3, "sot_per90": 0.3, "prgc_per90": 1.0, "prgp_per90": 1.5, "tkl_per90": 2.0, "int_per90": 2.0, "clr_per90": 2.5, "blk_per90": 2.5, "aer_won_per90": 2.0, "saves_per90": 0.0, "psxg_net_per90": 0.0},
-            "GK": {"xg_per90": 0.0, "xag_per90": 0.0, "gls_per90": 0.0, "ast_per90": 0.0, "sh_per90": 0.0, "sot_per90": 0.0, "prgc_per90": 0.1, "prgp_per90": 0.5, "tkl_per90": 0.1, "int_per90": 0.1, "clr_per90": 1.0, "blk_per90": 0.2, "aer_won_per90": 0.5, "saves_per90": 3.0, "psxg_net_per90": 3.0}
-        }
-
-    def find_similar_players(self, player_name: str, top_n: int = 5, same_position: bool = False):
-        if player_name not in self.df["player"].values:
-            return f"Player '{player_name}' not found in database."
-
-        target_idx = self.df[self.df["player"] == player_name].index[0]
-        target_pos = self.df.loc[target_idx, "pos_clean"]
+    def __init__(self, data_path="data/master_scouting_db.csv", matrix_path="data/similarity_matrix.parquet"):
+        self.data_path = data_path
+        self.matrix_path = matrix_path
         
-        lookup_pos = target_pos if target_pos in self.weight_map else "MF"
-        weights = np.array([self.weight_map[lookup_pos].get(col, 1.0) for col in self.feature_cols])
+        # Load dataset
+        self.df = pd.read_csv(self.data_path)
+        self.df.columns = [c.lower() for c in self.df.columns]
+        self.df = self.df.dropna(subset=['player']).drop_duplicates(subset=['player']).reset_index(drop=True)
+        
+        # Keep tactical features accessible for charts & UI
+        self.feature_cols = [c for c in self.df.columns if 'per90' in c or c in ['min', 'age_clean']]
+        
+        # Load precomputed matrix or compute fallback
+        if os.path.exists(self.matrix_path):
+            self.sim_matrix = pd.read_parquet(self.matrix_path)
+        else:
+            self._compute_matrix_fallback()
 
-        # Apply positional multipliers to the scaled space
-        weighted_target = self.scaled_features[target_idx].reshape(1, -1) * weights
-        weighted_space = self.scaled_features * weights
+    def _compute_matrix_fallback(self):
+        features = self.df[self.feature_cols].fillna(0)
+        scaler = StandardScaler()
+        scaled = scaler.fit_transform(features)
+        sim = cosine_similarity(scaled)
+        self.sim_matrix = pd.DataFrame(sim, index=self.df['player'], columns=self.df['player'])
 
-        similarities = cosine_similarity(weighted_target, weighted_space).flatten()
-        self.df["similarity"] = similarities
+    def find_similar_players(self, target_player: str, top_n: int = 5, same_position: bool = False):
+        if target_player not in self.sim_matrix.index:
+            return None
 
-        pool = self.df[self.df["player"] != player_name].copy()
+        # Extract similarity scores and remove self-comparison
+        sim_scores = self.sim_matrix.loc[target_player]
+        if isinstance(sim_scores, pd.DataFrame):
+            sim_scores = sim_scores.iloc[0]
+        sim_scores = sim_scores.drop(labels=[target_player], errors='ignore')
 
-        if same_position and pd.notna(target_pos):
-            pool = pool[pool["pos_clean"] == target_pos]
+        # Filter by position group if requested
+        if same_position and 'pos_clean' in self.df.columns:
+            target_pos = self.df[self.df['player'] == target_player]['pos_clean'].iloc[0]
+            valid_players = self.df[self.df['pos_clean'] == target_pos]['player']
+            sim_scores = sim_scores[sim_scores.index.isin(valid_players)]
 
-        if pool.empty:
-            return "No matching players found under the selected filters."
+        top_matches = sim_scores.sort_values(ascending=False).head(top_n)
 
-        top_matches = pool.sort_values(by="similarity", ascending=False).head(top_n)
+        # Merge with player metadata for UI display
+        results = self.df[self.df['player'].isin(top_matches.index)].copy()
+        results['Similarity Score'] = results['player'].map(top_matches)
+        results = results.sort_values(by='Similarity Score', ascending=False)
 
-        results = pd.DataFrame({
-            "Player": top_matches["player"],
-            "Club": top_matches["squad"].str.title() if "squad" in top_matches.columns else "N/A",
-            "Pos": top_matches["pos_clean"].str.upper() if "pos_clean" in top_matches.columns else "N/A",
-            "Match %": (top_matches["similarity"] * 100).round(1)
-        })
+        display_cols = ['player', 'squad', 'pos_clean', 'age_clean', 'Similarity Score']
+        display_cols = [c for c in display_cols if c in results.columns]
 
-        return results.reset_index(drop=True)
+        output = results[display_cols].copy()
+        output['Similarity Score'] = (output['Similarity Score'] * 100).map('{:.1f}%'.format)
+        output.rename(
+            columns={
+                'player': 'Player',
+                'squad': 'Club',
+                'pos_clean': 'Position',
+                'age_clean': 'Age'
+            },
+            inplace=True
+        )
+        return output

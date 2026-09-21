@@ -21,6 +21,57 @@ def clean_frame(df: pd.DataFrame) -> pd.DataFrame:
     return df.loc[:, ~df.columns.duplicated()].copy()
 
 
+def classify_tactical_role(row: pd.Series) -> str:
+    """
+    Classifies players into discrete tactical positions:
+    ST, WINGER, CAM, CM, CDM, FULLBACK, CB, GK
+    """
+    raw_pos = str(row.get("pos", "")).upper()
+
+    if "GK" in raw_pos:
+        return "GK"
+
+    # 1. Defenders (Fullbacks vs Center-Backs)
+    if "DF" in raw_pos and "FW" not in raw_pos:
+        # Fullbacks/Wingbacks exhibit progressive carry and pass volume
+        if (
+            any(tag in raw_pos for tag in ["LB", "RB", "WB"])
+            or row.get("prgc_per90", 0) >= 1.2
+            or row.get("prgp_per90", 0) >= 2.8
+        ):
+            return "FULLBACK"
+        return "CB"
+
+    # 2. Attackers (Strikers vs Wingers)
+    if "FW" in raw_pos:
+        # Wide forwards / wingers with high ball carrying
+        if any(tag in raw_pos for tag in ["LW", "RW", "LM", "RM"]) or row.get("prgc_per90", 0) >= 2.3:
+            return "WINGER"
+        # Central attacking midfielders who occasionally line up as second strikers
+        if "MF" in raw_pos and row.get("prgp_per90", 0) >= 4.0:
+            return "CAM"
+        return "ST"
+
+    # 3. Midfielders (CAM vs CM vs CDM)
+    if "MF" in raw_pos:
+        # CAM: High shot volume, creative metrics, or goal involvement
+        if (
+            row.get("sh_per90", 0) >= 1.6
+            or row.get("xag_per90", 0) >= 0.14
+            or (row.get("gls_per90", 0) + row.get("ast_per90", 0)) >= 0.28
+        ):
+            return "CAM"
+
+        # CDM: Defensive shield prioritizing ball winning over final third involvement
+        defensive_actions = row.get("tkl_per90", 0) + row.get("int_per90", 0)
+        if defensive_actions >= 2.8 and row.get("sh_per90", 0) < 1.2:
+            return "CDM"
+
+        # CM: Central / Box-to-Box controllers (balanced progression and defense)
+        return "CM"
+
+    return "CM"
+
 def build_valuation_model():
     print("Loading multi-season datasets...")
 
@@ -102,7 +153,6 @@ def build_valuation_model():
     stat_per90_cols = [f"{stat}_per90" for stat in raw_stats]
 
     # 4. Time-Decay Weighting
-    # More recent seasons have greater influence to capture breakout form
     season_weights = {
         "2025-2026": 1.0,
         "2024-2025": 0.85,
@@ -129,7 +179,13 @@ def build_valuation_model():
     for col in stat_per90_cols:
         df_raw[f"{col}_weighted"] = df_raw[col] * df_raw["weighted_90s"]
         agg_dict[f"{col}_weighted"] = "sum"
-
+    os.makedirs("data", exist_ok=True)
+    df_raw.to_csv("data/player_timeline_db.csv", index=False)
+    # Save the un-aggregated timeline for the Form vs Baseline UI
+    os.makedirs("data", exist_ok=True)
+    df_raw.to_csv("data/player_timeline_db.csv", index=False)
+    
+    # Existing grouping code...
     player_agg = df_raw.groupby("player", as_index=False).agg(agg_dict)
 
     for col in stat_per90_cols:
@@ -187,19 +243,17 @@ def build_valuation_model():
     df_fb = df_fb[df_fb["actual_value_m"] > 0.5].copy()
     print(f"Calibrated dataset contains {len(df_fb)} qualified players.")
 
-    # 7. Clean Age and Position
+    # 7. Clean Age and Apply Granular Tactical Roles
     if "age" in df_fb.columns:
         df_fb["age_clean"] = df_fb["age"].astype(str).str.split("-").str[0]
         df_fb["age_clean"] = pd.to_numeric(df_fb["age_clean"], errors="coerce").fillna(25.0)
     else:
         df_fb["age_clean"] = 25.0
 
-    if "pos" in df_fb.columns:
-        df_fb["pos_clean"] = df_fb["pos"].astype(str).str[:2].str.upper()
-    else:
-        df_fb["pos_clean"] = "MF"
+    print("Classifying players into granular tactical roles...")
+    df_fb["pos_clean"] = df_fb.apply(classify_tactical_role, axis=1)
 
-    # 8. PRESERVE ORIGINAL COLUMNS WHILE CREATING DUMMIES
+    # 8. Encode Features with Positional Indicators
     df_fb["raw_pos_clean"] = df_fb["pos_clean"]
     df_fb["raw_league"] = df_fb["league"]
 
@@ -227,6 +281,7 @@ def build_valuation_model():
         X, y_log, y_raw, test_size=0.2, random_state=42
     )
 
+    # Base Valuation Model
     model = XGBRegressor(
         n_estimators=400,
         learning_rate=0.03,
@@ -247,6 +302,31 @@ def build_valuation_model():
 
     all_predictions = np.expm1(model.predict(X))
     df_encoded["predicted_value_m"] = np.round(all_predictions, 2)
+
+    # Quantile Regression Models (15th and 85th Percentiles for Valuation Ranges)
+    try:
+        model_low = XGBRegressor(
+            n_estimators=400, learning_rate=0.03, max_depth=5,
+            subsample=0.8, colsample_bytree=0.8, objective="reg:quantileerror",
+            quantile_alpha=0.15, random_state=42
+        )
+        model_low.fit(X_train, y_train_log)
+        df_encoded["pred_value_low_m"] = np.round(np.expm1(model_low.predict(X)), 2)
+
+        model_high = XGBRegressor(
+            n_estimators=400, learning_rate=0.03, max_depth=5,
+            subsample=0.8, colsample_bytree=0.8, objective="reg:quantileerror",
+            quantile_alpha=0.85, random_state=42
+        )
+        model_high.fit(X_train, y_train_log)
+        df_encoded["pred_value_high_m"] = np.round(np.expm1(model_high.predict(X)), 2)
+    except Exception:
+        # Fallback to residual standard error if quantile objective is unavailable
+        residuals = y_test_raw - test_predictions
+        std_err = np.std(residuals)
+        df_encoded["pred_value_low_m"] = np.round(np.clip(all_predictions - 1.04 * std_err, 0.5, None), 2)
+        df_encoded["pred_value_high_m"] = np.round(all_predictions + 1.04 * std_err, 2)
+
     df_encoded["surplus_value_m"] = np.round(df_encoded["predicted_value_m"] - df_encoded["actual_value_m"], 2)
 
     os.makedirs("data", exist_ok=True)
