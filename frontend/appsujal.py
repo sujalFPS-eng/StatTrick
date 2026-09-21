@@ -6,6 +6,7 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
+from datetime import datetime
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from src.similarity_engine import PlayerSimilarityEngine
@@ -854,11 +855,22 @@ top_k = st.sidebar.slider("Number of Clones", 3, 10, 5)
 filter_pos = st.sidebar.checkbox("Enforce Same Position Group", False)
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("### Data sources")
+st.sidebar.markdown("### DATA SOURCES")
 st.sidebar.caption(
     "• **Tactical data:** [FBref](https://fbref.com/)\n\n"
-    "• **Financials:** [Transfermarkt](https://www.transfermarkt.com/)\n\n"
-    "*Processed via XGBoost pipeline with exponential time-decay.*"
+    "• **Financials:** [Transfermarkt](https://www.transfermarkt.com/)"
+)
+
+# Dynamically calculate last sync from database file modification time
+db_path = "data/master_scouting_db.csv"
+if os.path.exists(db_path):
+    last_modified = datetime.fromtimestamp(os.path.getmtime(db_path)).strftime("%b %d, %Y")
+else:
+    last_modified = "Weekly"
+
+st.sidebar.caption(
+    f"• **Sync Cadence:** Automated weekly (Mondays 04:00 UTC)\n\n"
+    f"*Last Model Sync: {last_modified} | XGBoost + Exp Decay*"
 )
 
 tab1, tab2, tab3 = st.tabs(["Tactical Cloning", "Arbitrage Screener", "Head-to-Head Sandbox"])

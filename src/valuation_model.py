@@ -33,12 +33,18 @@ def classify_tactical_role(row: pd.Series) -> str:
 
     # 1. Defenders (Fullbacks vs Center-Backs)
     if "DF" in raw_pos and "FW" not in raw_pos:
-        if (
-            any(tag in raw_pos for tag in ["LB", "RB", "WB"])
-            or row.get("prgc_per90", 0) >= 1.2
-            or row.get("prgp_per90", 0) >= 2.8
-        ):
+        # Explicit wide-defender tags from source
+        if any(tag in raw_pos for tag in ["LB", "RB", "WB"]):
             return "FULLBACK"
+        
+        # Statistically distinguish pure CBs from Fullbacks:
+        # Fullbacks carry heavily (prgc >= 1.8) and contest fewer central clearances (clr < 2.2)
+        prgc = row.get("prgc_per90", 0)
+        clr = row.get("clr_per90", 0)
+        
+        if prgc >= 1.8 and clr < 2.2:
+            return "FULLBACK"
+        
         return "CB"
 
     # 2. Attackers (Strikers vs Wingers)
