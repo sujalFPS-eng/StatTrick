@@ -2,15 +2,14 @@ name: StatTrick MLOps Engine
 
 on:
   schedule:
-    # Runs automatically every Monday at 04:00 UTC
     - cron: '0 4 * * 1'
-  workflow_dispatch: # Allows you to click a "Run Workflow" button manually in GitHub
+  workflow_dispatch:
 
 jobs:
   retrain-and-deploy:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # Grants the bot permission to push data back to your repo
+      contents: write 
 
     steps:
     - name: Checkout Repository
@@ -19,7 +18,7 @@ jobs:
     - name: Set up Python Environment
       uses: actions/setup-python@v5
       with:
-        python-version: '3.11' # Match this to your local Python version
+        python-version: '3.11' 
         cache: 'pip'
 
     - name: Install Dependencies
@@ -27,8 +26,12 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
 
+    - name: Install Display Server for SeleniumBase
+      run: sudo apt-get install -y xvfb dbus-x11
+
     - name: Stage 0 - Ingest Live Data
-      run: python src/ingest_fbref.py
+      # xvfb-run creates a virtual screen for SeleniumBase to use
+      run: xvfb-run python src/ingest_fbref.py
       
     - name: Stage 1 - Run XGBoost Valuation Pipeline
       run: python src/valuation_model.py
@@ -44,5 +47,4 @@ jobs:
         git config --local user.name "github-actions[bot]"
         git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
         git add data/
-        # Checks if data changed. If yes, commits and pushes. If no, exits gracefully.
         git diff --quiet && git diff --staged --quiet || (git commit -m "🤖 MLOps: Automated model retraining and data artifact sync" && git push)
