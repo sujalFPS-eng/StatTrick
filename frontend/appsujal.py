@@ -7,6 +7,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 from datetime import datetime
+from google import genai
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from src.similarity_engine import PlayerSimilarityEngine
@@ -20,12 +21,12 @@ st.set_page_config(
 )
 
 # --- 0. DESIGN TOKENS (shared by CSS + Plotly) ---
-MINT = "#35E08C"          # primary accent — floodlit pitch green
+MINT = "#35E08C"          
 MINT_DIM = "#1F8F59"
-CYAN = "#4CC9F0"          # secondary accent
-CORAL = "#FF5C7A"         # premium / negative
+CYAN = "#4CC9F0"          
+CORAL = "#FF5C7A"         
 AMBER = "#FFB020"
-INK = "#06100D"           # app base
+INK = "#06100D"           
 PANEL = "#0D1A16"
 PANEL_HI = "#13241F"
 LINE = "#1D332C"
@@ -40,6 +41,14 @@ POS_ACCENT = {
     "WINGER": CORAL, "ST": CORAL,
 }
 
+CLUB_ALIASES = {
+    "Newcastle": "Newcastle United",
+    "Brighton": "Brighton & Hove Albion",
+    "Wolves": "Wolverhampton Wanderers",
+    "Tottenham": "Tottenham Hotspur",
+    "West Ham": "West Ham United",
+}
+
 # --- 1. METRICS & LABELS DICTIONARY ---
 METRIC_LABELS = {
     "gls_per90": "Goals / 90",
@@ -50,10 +59,10 @@ METRIC_LABELS = {
     "sot_per90": "Shots on Target / 90",
     "prgc_per90": "Progressive Carries / 90",
     "prgp_per90": "Progressive Passes / 90",
-    "tkl_per90": "Tackles / 90",
-    "int_per90": "Interceptions / 90",
-    "clr_per90": "Clearances / 90",
-    "blk_per90": "Blocks / 90",
+    "tkl_per90": "Tackles (PAdj) / 90",
+    "int_per90": "Interceptions (PAdj) / 90",
+    "clr_per90": "Clearances (PAdj) / 90",
+    "blk_per90": "Blocks (PAdj) / 90",
     "aer_won_per90": "Aerials Won / 90",
     "saves_per90": "Saves / 90",
     "psxg_net_per90": "PSxG Net / 90",
@@ -100,7 +109,6 @@ def format_value(val, col_name: str) -> str:
     return str(val)
 
 def normalize_name(name: str) -> str:
-    """Strips accents and special characters for keyboard searchability."""
     if not isinstance(name, str):
         return str(name)
     return ''.join(c for c in unicodedata.normalize('NFD', name) if unicodedata.category(c) != 'Mn')
@@ -143,10 +151,6 @@ def get_radar_metrics(position: str, available_cols: list) -> list:
     return valid[:5]
 
 def get_position_form_metric(pos_tag: str, df_p: pd.DataFrame):
-    """
-    Selects role-calibrated multi-season KPIs for Form vs. Baseline.
-    Returns (pd.Series of metric values, display title string).
-    """
     pos_tag = str(pos_tag).upper()
 
     if "GK" in pos_tag:
@@ -180,7 +184,7 @@ def get_position_form_metric(pos_tag: str, df_p: pd.DataFrame):
         prgp = pd.to_numeric(df_p.get("prgp_per90", 0), errors="coerce").fillna(0)
         return xa + prgp, "Playmaking Output / 90 (xA + PrgP)"
 
-    else:  # ST, WINGER, Forward roles
+    else:  
         xg = pd.to_numeric(df_p.get("xg_per90", 0), errors="coerce").fillna(0)
         xa = pd.to_numeric(df_p.get("xag_per90", 0), errors="coerce").fillna(0)
         return xg + xa, "Goal Contribution / 90 (xG + xA)"
@@ -768,6 +772,44 @@ def render_metrics_html(cards_data: list):
         )
         col.markdown(card, unsafe_allow_html=True)
 
+@st.cache_data(show_spinner=False)
+def generate_tactical_brief(player_dict, squad_dict, fit_data, api_key):
+    """Generates a constrained AI scouting brief based strictly on vector math."""
+    try:
+        from src.system_fit import STYLE_FEATURES
+        
+        deltas = {}
+        for feature in STYLE_FEATURES:
+            p_val = float(player_dict.get(feature, 0.0))
+            s_val = float(squad_dict.get(feature, 0.0))
+            deltas[feature] = p_val - s_val
+            
+        best_feature = max(deltas, key=deltas.get)
+        worst_feature = min(deltas, key=deltas.get)
+        
+        prompt = f"""
+        You are a Lead Tactical Scout for {fit_data['target_squad']}.
+        Write a 3-sentence executive summary evaluating a player's fit for our "{fit_data['archetype']}" system.
+        
+        MANDATORY CONSTRAINTS:
+        - You MUST state that their strongest tactical synergy is {label(best_feature).replace(' / 90', '')} (+{deltas[best_feature]:.2f} per 90 above our squad average).
+        - You MUST state that their biggest tactical friction is {label(worst_feature).replace(' / 90', '')} ({deltas[worst_feature]:.2f} per 90 below our squad average).
+        - Do NOT hallucinate any other statistics. Do not use filler introductions.
+        - Write in a professional, analytical front-office tone.
+        """
+        
+        client = genai.Client(api_key=api_key)
+        response = client.models.generate_content(
+            model='gemini-3.8-flash',
+            contents=prompt,
+            config={
+                "temperature": 0.2 
+            }
+        )
+        return response.text
+    except Exception as e:
+        return f"Scouting AI unavailable: {str(e)}"
+
 def apply_custom_theme(fig):
     fig.update_layout(
         paper_bgcolor="rgba(0,0,0,0)",
@@ -818,7 +860,7 @@ def load_data():
         else: df["league"] = "Unknown"
 
     df["pos_clean"] = df["pos_clean"].astype(str).str.upper()
-    df["squad"] = df["squad"].astype(str).str.title()
+    df["squad"] = df["squad"].astype(str).str.title().replace(CLUB_ALIASES)
     df["league"] = df["league"].astype(str).str.title()
     return df
 
@@ -828,7 +870,11 @@ def load_engine():
 
 @st.cache_resource
 def load_system_engine():
-    return SystemFitEngine()
+    engine = SystemFitEngine()
+    if hasattr(engine, "club_profiles") and "squad" in engine.club_profiles.columns:
+        engine.club_profiles["squad"] = engine.club_profiles["squad"].replace(CLUB_ALIASES)
+        engine.club_profiles = engine.club_profiles.groupby("squad", as_index=False).first()
+    return engine
 
 @st.cache_data
 def load_timeline_data():
@@ -904,7 +950,6 @@ st.sidebar.caption(
     "• **Financials:** [Transfermarkt](https://www.transfermarkt.com/)"
 )
 
-# Dynamically calculate last sync from database file modification time
 db_path = "data/master_scouting_db.csv"
 if os.path.exists(db_path):
     last_modified = datetime.fromtimestamp(os.path.getmtime(db_path)).strftime("%b %d, %Y")
@@ -916,7 +961,7 @@ st.sidebar.caption(
     f"*Last Model Sync: {last_modified} | XGBoost + Exp Decay*"
 )
 
-tab1, tab2, tab3 = st.tabs(["Tactical Cloning", "Arbitrage Screener", "Head-to-Head Sandbox"])
+tab1, tab2, tab3, tab4 = st.tabs(["Tactical Cloning", "Arbitrage Screener", "Head-to-Head Sandbox", "Gap Analysis"])
 
 # --- TAB 1: TACTICAL CLONING ---
 with tab1:
@@ -1028,6 +1073,27 @@ with tab1:
                 fit_data["tier"],
                 fit_data["fit_score"],
             )
+
+            api_key = None
+            if "GEMINI_API_KEY" in st.secrets:
+                api_key = st.secrets["GEMINI_API_KEY"]
+            else:
+                api_key = st.text_input("Enter free Gemini API Key to unlock AI Insights:", type="password")
+                
+            if api_key:
+                if st.button("Generate AI Tactical Brief", key="ai_insight"):
+                    with st.spinner("Analyzing vector synergy..."):
+                        p_dict = df_master[df_master["player"] == target].iloc[0].to_dict()
+                        s_dict = system_engine.club_profiles[system_engine.club_profiles["squad"].str.lower() == selected_squad.lower()].iloc[0].to_dict()
+                        
+                        brief = generate_tactical_brief(p_dict, s_dict, fit_data, api_key)
+                        
+                        st.markdown(
+                            f'<div style="padding: 1rem; border-left: 3px solid var(--mint); background: rgba(53,224,140,0.05); margin-top: 1rem; font-size: 0.88rem; border-radius: 8px;">'
+                            f'<b style="color: var(--mint);">🤖 AI Tactical Brief</b><br><br>{brief}'
+                            f'</div>', 
+                            unsafe_allow_html=True
+                        )
 
         with col_form:
             target_pos = str(target_row.get("pos_clean", "MF")).upper()
@@ -1219,6 +1285,89 @@ with tab3:
 
                     fig_h2h.update_layout(polar=dict(radialaxis=dict(visible=False, range=[0, 100])), legend=dict(orientation="h", y=1.14, xanchor="center", x=0.5))
                     st.plotly_chart(apply_custom_theme(fig_h2h), use_container_width=True)
+
+# --- TAB 4: GAP ANALYSIS ---
+with tab4:
+    section_heading("Gap analysis (Archetype-calibrated)", "Find players who plug specific system deficits")
+    st.info(
+        "**How this works:** We evaluate the club's metrics against their specific **Tactical Archetype's DNA** rather than generic European totals. "
+        "This ensures possession-heavy teams aren't erroneously penalized for low clearance volumes."
+    )
+
+    col_g1, col_g2 = st.columns(2)
+    gap_squads = sorted(system_engine.club_profiles["squad"].unique().tolist())
+    gap_default = gap_squads.index("Arsenal") if "Arsenal" in gap_squads else 0
+    gap_target_club = col_g1.selectbox("Select Club to Analyze", gap_squads, index=gap_default, key="gap_club")
+    target_unit = col_g2.selectbox("Target Recruitment Department", ["All Positions", "Midfield (CM/CDM/CAM)", "Defense (CB/Fullback)", "Attack (ST/Winger)"])
+
+    if st.button("Run Inverse Recruitment Engine", type="primary"):
+        with st.spinner(f"Analyzing {gap_target_club}'s tactical deficiencies..."):
+            from src.system_fit import STYLE_FEATURES, ARCHETYPE_PROFILES
+            club_df = system_engine.club_profiles.copy()
+
+            target_club_row = club_df[club_df["squad"].str.lower() == gap_target_club.lower()].iloc[0]
+            club_archetype = target_club_row.get("tactical_archetype", "Balanced Mid-Block & Pragmatic")
+            ideal_profile = ARCHETYPE_PROFILES.get(club_archetype, ARCHETYPE_PROFILES["Balanced Mid-Block & Pragmatic"])
+
+            gaps = {}
+            for feat in STYLE_FEATURES:
+                if feat in target_club_row.index and feat in ideal_profile:
+                    feat_mean = club_df[feat].mean()
+                    feat_std = club_df[feat].std() if club_df[feat].std() > 0 else 1.0
+                    club_z = (target_club_row[feat] - feat_mean) / feat_std
+                    
+                    target_z = ideal_profile[feat]
+                    gaps[feat] = target_z - club_z
+
+            weakness_metric = max(gaps, key=gaps.get)
+            gap_magnitude = gaps[weakness_metric]
+
+            st.markdown(
+                f'<div style="padding: 1.2rem; border-left: 3px solid var(--coral); background: rgba(255,92,122,0.05); margin: 1rem 0; border-radius: 8px;">'
+                f'<b style="color: var(--coral);">🚨 Archetype Vulnerability: {label(weakness_metric)}</b><br><br>'
+                f'{gap_target_club} plays a <b>{club_archetype}</b> system, but their squad output in <b>{label(weakness_metric)}</b> is '
+                f'<b>{gap_magnitude:.2f} standard deviations</b> below their archetype’s ideal blueprint. Surfacing targeted arbitrage solutions below:'
+                f'</div>', 
+                unsafe_allow_html=True
+            )
+
+            candidates = df_master[
+                (df_master["squad"].str.lower() != gap_target_club.lower()) &
+                (df_master["surplus_value_m"] > 0) &
+                (df_master["min"] >= 900) &
+                (df_master["age_clean"] <= 28)
+            ].copy()
+
+            if "Midfield" in target_unit:
+                candidates = candidates[candidates["pos_clean"].isin(["CM", "CDM", "CAM"])]
+            elif "Defense" in target_unit:
+                candidates = candidates[candidates["pos_clean"].isin(["CB", "FULLBACK"])]
+            elif "Attack" in target_unit:
+                candidates = candidates[candidates["pos_clean"].isin(["ST", "WINGER"])]
+
+            if not candidates.empty and weakness_metric in candidates.columns:
+                m_mean = candidates[weakness_metric].mean()
+                m_std = candidates[weakness_metric].std() if candidates[weakness_metric].std() > 0 else 1.0
+                s_mean = candidates["surplus_value_m"].mean()
+                s_std = candidates["surplus_value_m"].std() if candidates["surplus_value_m"].std() > 0 else 1.0
+
+                candidates["metric_z"] = (candidates[weakness_metric] - m_mean) / m_std
+                candidates["surplus_z"] = (candidates["surplus_value_m"] - s_mean) / s_std
+                candidates["gap_score"] = (candidates["metric_z"] * 1.5) + candidates["surplus_z"]
+
+                top_targets = candidates.sort_values(by="gap_score", ascending=False).head(5)
+
+                display_cols = ["player", "squad", "pos_clean", "age_clean", weakness_metric, "actual_value_m", "surplus_value_m"]
+                display_df = top_targets[display_cols].copy()
+
+                for c in ["actual_value_m", "surplus_value_m"]:
+                    display_df[c] = display_df[c].apply(fmt_eur_m)
+                display_df[weakness_metric] = display_df[weakness_metric].apply(lambda x: f"{float(x):.2f}")
+
+                display_df.rename(columns={c: label(c) for c in display_df.columns}, inplace=True)
+                st.dataframe(display_df, hide_index=True, use_container_width=True)
+            else:
+                st.warning("No players matched the specific position filter and surplus criteria.")
 
 # --- Application Footer ---
 st.markdown("---")
