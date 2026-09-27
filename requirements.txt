@@ -8,3 +8,4 @@ lxml
 xgboost
 scikit-learn
 google-genai
+rapidfuzz
