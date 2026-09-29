@@ -29,17 +29,17 @@ jobs:
     - name: Install Display Server for SeleniumBase
       run: sudo apt-get install -y xvfb dbus-x11
 
-    - name: Stage 0 - Ingest Live Data
-      # xvfb-run creates a virtual screen for SeleniumBase to use
+    - name: Stage 0A - Ingest Live Tactical Data (FBref)
+      # xvfb-run creates a virtual screen for SeleniumBase to use headed mode
       run: xvfb-run python src/ingest_fbref.py
       
+    - name: Stage 0B - Ingest Live Financials (Transfermarkt)
+      run: xvfb-run python src/ingest_valuations.py
+
     - name: Stage 1 - Run XGBoost Valuation Pipeline
       run: python src/valuation_model.py
 
-    - name: Stage 2 - Rebuild O(1) Similarity Matrix
-      run: python src/build_matrix.py
-
-    - name: Stage 3 - Update K-Means Tactical Clusters
+    - name: Stage 2 - Update K-Means Tactical Clusters
       run: python src/system_fit.py
 
     - name: Commit and Push Updated Artifacts

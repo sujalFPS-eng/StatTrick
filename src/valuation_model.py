@@ -1,353 +1,430 @@
-import os
-import pandas as pd
+"""StatTrick valuation pipeline (patched).
+
+What changed vs. the original (numbers refer to the audit):
+  #1  every player-season is collapsed to ONE row (key = accent-free name + birth year +
+      season + club); richer sources fill gaps in poorer ones instead of being added twice.
+  #2  explicit per-source column maps (no more global alias dict that missed
+      'expected goals', wrong 'blocks', 'won', 'psxg+/-' ...); cleaned_* files now
+      actually contribute minutes (their 'Avg Mins per Match' column is total minutes).
+  #3  missing data stays NaN (XGBoost handles NaN natively); a has_advanced flag is exported.
+  #4  Transfermarkt match is blocked on birth year, prefers active players, is accent-proof,
+      and every unmatched >=1500-minute player is written to data/unmatched_players.csv.
+  #5  players who have not played in the last two seasons are excluded (not recruitable).
+  #6  predictions are OUT-OF-FOLD for every player (no in-sample flattery); metrics are honest.
+  #7  surplus is also exported in % / log terms (surplus_pct, surplus_log).
+  #8  no hard-coded years, contract years from today, age from date of birth,
+      league labels canonicalised (5 dummies, not 10).
+"""
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 import numpy as np
-from sklearn.model_selection import train_test_split
-from xgboost import XGBRegressor
+import pandas as pd
+from rapidfuzz import fuzz, process
 from sklearn.metrics import mean_absolute_error, r2_score
-from rapidfuzz import process, fuzz
+from sklearn.model_selection import KFold, cross_val_predict
+from xgboost import XGBRegressor
+
+from src.common import (
+    DATA_DIR, canon_club, canon_league, canon_season, current_season_start, make_pkey,
+    name_key, season_start, season_weight, today, write_json,
+)
+
+MIN_CAREER_MINUTES = 1500      # deduplicated minutes across all seasons
+MIN_MARKET_VALUE_M = 0.25      # was 0.5 - less truncation of the target
+RECENT_SEASONS = 2             # must have played in one of the last N seasons
+TM_ACTIVE_LOOKBACK = 2         # TM 'last_season' >= current_start - 2
+FUZZY_CUTOFF = 88              # after accent stripping + birth-year blocking this is safe
+
+RAW_STATS = ["gls", "ast", "xg", "xag", "sh", "sot", "prgc", "prgp",
+             "tkl", "int", "clr", "blk", "aer_won", "saves", "psxg_net"]
+PER90_COLS = [f"{s}_per90" for s in RAW_STATS]
+ADVANCED = ["xg", "xag", "prgc", "prgp"]
+ID_COLS = ["player", "born", "pos", "squad", "league", "age", "min"]
+
+# ---------------------------------------------------------------------------- sources
+# Column maps are applied AFTER lower-casing + stripping. One explicit map per source.
+CLEANED_MAP = {
+    "avg mins per match": "min",        # despite the name this column holds TOTAL minutes
+    "goals": "gls", "assists": "ast", "expected goals": "xg",
+    "progressive carries": "prgc", "progressive passes": "prgp",
+    "total shots": "sh", "tackles attempted": "tkl", "interceptions": "int",
+    "clearances": "clr", "saves": "saves",
+}
+MAP_2425 = {                              # plain 'blocks' (passing table) is dropped first
+    "blocks_stats_defense": "blk", "won": "aer_won", "psxg+/-": "psxg_net",
+}
+
+SOURCES = [
+    # path, tag, rank (lower wins), fixed season (None = read from file), column map, drop
+    ("fbref_2425.csv", "fbref_2425", 0, "2024-2025", MAP_2425, ["blocks"]),
+    ("fbref_2526.csv", "fbref_2526", 0, "2025-2026", {}, []),
+    ("cleaned_2021-22.csv", "cleaned", 1, None, CLEANED_MAP, []),
+    ("cleaned_2022-23.csv", "cleaned", 1, None, CLEANED_MAP, []),
+    ("cleaned_2023-24.csv", "cleaned", 1, None, CLEANED_MAP, []),
+    ("live_fbref_data.csv", "live", 1, "LIVE", {}, []),
+    ("fbref_historical_stats.csv", "historical", 2, None, {}, []),
+]
 
 
-def clean_frame(df: pd.DataFrame) -> pd.DataFrame:
-    """Flattens MultiIndexes, lowercases column names, and removes duplicate headers."""
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.get_level_values(-1)
+def _read(path: Path) -> pd.DataFrame:
+    df = pd.read_csv(path, low_memory=False)
     df.columns = [str(c).strip().lower() for c in df.columns]
-
-    if "comp" in df.columns:
-        df.rename(columns={"comp": "league"}, inplace=True)
-    elif "competition" in df.columns:
-        df.rename(columns={"competition": "league"}, inplace=True)
-
-    return df.loc[:, ~df.columns.duplicated()].copy()
+    return df.loc[:, ~df.columns.duplicated()].copy()      # keep first of any duplicate header
 
 
-def classify_tactical_role(row: pd.Series) -> str:
-    """
-    Classifies players into discrete tactical positions:
-    ST, WINGER, CAM, CM, CDM, FULLBACK, CB, GK
-    """
-    raw_pos = str(row.get("pos", "")).upper()
+def _num(s: pd.Series) -> pd.Series:
+    return pd.to_numeric(s.astype(str).str.replace(",", "", regex=False), errors="coerce")
 
-    if "GK" in raw_pos:
+
+def load_source(fname, tag, rank, season, colmap, drop) -> pd.DataFrame | None:
+    path = DATA_DIR / fname
+    if not path.exists():
+        print(f"  ! missing {fname} (skipped)")
+        return None
+    df = _read(path)
+    df = df.drop(columns=[c for c in drop if c in df.columns])
+    df = df.rename(columns=colmap)
+    df = df.loc[:, ~df.columns.duplicated()].copy()
+    if "comp" in df.columns and "league" not in df.columns:
+        df = df.rename(columns={"comp": "league"})
+
+    # derived stats for the cleaned_* files
+    if tag == "cleaned":
+        if {"shots blocked", "passes blocked"} <= set(df.columns):
+            df["blk"] = _num(df["shots blocked"]) + _num(df["passes blocked"])
+        if {"total shots", "% shots on target"} <= set(df.columns):
+            df["sot"] = (_num(df["total shots"]) * _num(df["% shots on target"]) / 100).round()
+
+    if season == "LIVE":
+        df["season"] = f"{current_season_start()}-{current_season_start() + 1}"
+    elif season:
+        df["season"] = season
+    df["src"], df["rank"] = tag, rank
+
+    for c in ID_COLS + RAW_STATS:
+        if c not in df.columns:
+            df[c] = np.nan
+    keep = ID_COLS + RAW_STATS + ["season", "src", "rank"]
+    out = df[keep].copy()
+    print(f"  + {fname:32s} {len(out):6d} rows  [{tag}]")
+    return out
+
+
+def build_player_seasons() -> pd.DataFrame:
+    print("Loading sources...")
+    frames = [f for f in (load_source(*s) for s in SOURCES) if f is not None]
+    df = pd.concat(frames, ignore_index=True)
+
+    df["season"] = df["season"].map(canon_season)
+    df["league"] = df["league"].map(canon_league)
+    df["squad"] = df["squad"].map(canon_club)
+    df["min"] = _num(df["min"])
+    df["born"] = pd.to_numeric(df["born"], errors="coerce")
+    df["age"] = df["age"].astype(str).str.split("-").str[0]
+    df["age"] = pd.to_numeric(df["age"], errors="coerce")
+    df["pos"] = df["pos"].astype(str).replace("nan", "")
+    for c in RAW_STATS:
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+
+    df = df[df["player"].notna() & (df["player"] != "Player") & df["season"].notna()]
+    df = df[df["min"] > 0].copy()
+    df["pkey"] = make_pkey(df["player"], df["born"])
+
+    before = len(df)
+    df = (df.sort_values("rank", kind="stable")
+            .groupby(["pkey", "season", "squad"], as_index=False, sort=False).first())
+    print(f"Collapsed {before:,} source rows -> {len(df):,} player-season rows "
+          f"({before - len(df):,} duplicates removed)")
+
+    # sanity: same player+season at two clubs with identical minutes = probably a spelling variant
+    twins = df.groupby(["pkey", "season"]).filter(lambda g: len(g) > 1 and g["min"].nunique() < len(g))
+    print(f"Possible residual club-spelling duplicates: {len(twins)} rows")
+
+    m90 = df["min"] / 90.0
+    for s in RAW_STATS:
+        df[f"{s}_per90"] = df[s] / m90            # NaN stays NaN
+    df["season_start"] = df["season"].map(season_start)
+    return df
+
+
+# ---------------------------------------------------------------------------- aggregate
+def aggregate_players(ps: pd.DataFrame) -> pd.DataFrame:
+    ps = ps.copy()
+    ps["w90"] = (ps["min"] / 90.0) * ps["season"].map(season_weight)
+
+    agg = {"min": ("min", "sum"), "n_seasons": ("season", "nunique"),
+           "last_season_start": ("season_start", "max")}
+    for c in PER90_COLS:
+        valid = ps[c].notna()
+        ps[f"{c}__num"] = np.where(valid, ps[c] * ps["w90"], 0.0)
+        ps[f"{c}__den"] = np.where(valid, ps["w90"], 0.0)
+        agg[f"{c}__num"] = (f"{c}__num", "sum")
+        agg[f"{c}__den"] = (f"{c}__den", "sum")
+    ps["_adv"] = ps[[f"{a}_per90" for a in ADVANCED]].notna().all(axis=1)
+    ps["_adv_season"] = np.where(ps["_adv"], ps["season_start"], np.nan)
+    agg["adv_last_season_start"] = ("_adv_season", "max")
+
+    out = ps.groupby("pkey").agg(**agg).reset_index()
+    for c in PER90_COLS:
+        den = out.pop(f"{c}__den")
+        num = out.pop(f"{c}__num")
+        out[c] = np.where(den > 0, num / den.replace(0, np.nan), np.nan)   # NaN, not 0
+    out["has_advanced"] = out[[f"{a}_per90" for a in ADVANCED]].notna().all(axis=1).astype(int)
+
+    # identity from the most recent season (largest stint if he moved mid-season)
+    latest = (ps.sort_values(["season_start", "min"], ascending=False)
+                .drop_duplicates("pkey")[["pkey", "player", "squad", "league", "age", "born"]])
+    latest_squads = (ps[ps["season_start"] == ps.groupby("pkey")["season_start"].transform("max")]
+                     .groupby("pkey")["squad"].agg(list).rename("latest_squads"))
+    recent = ps[ps["season_start"] >= ps.groupby("pkey")["season_start"].transform("max") - 1].copy()
+    recent["ncomma"] = recent["pos"].str.count(",")
+    posfull = (recent.sort_values("ncomma", ascending=False)
+                     .drop_duplicates("pkey")[["pkey", "pos"]].rename(columns={"pos": "pos_full"}))
+    out = (out.merge(latest, on="pkey").merge(posfull, on="pkey", how="left")
+              .merge(latest_squads, on="pkey", how="left"))
+    out["last_season"] = out["last_season_start"].map(lambda y: f"{int(y)}-{int(y) + 1}")
+    out["adv_last_season"] = out["adv_last_season_start"].map(
+        lambda y: f"{int(y)}-{int(y) + 1}" if pd.notna(y) else None)
+    return out
+
+
+# ---------------------------------------------------------------------------- Transfermarkt
+def _prep_tm() -> pd.DataFrame:
+    tm = pd.read_csv(DATA_DIR / "players.csv", low_memory=False)
+    tm.columns = [c.strip().lower() for c in tm.columns]
+    tm = tm[tm["market_value_in_eur"].notna()].copy()
+    tm = tm[tm["last_season"] >= current_season_start() - TM_ACTIVE_LOOKBACK].copy()  # active only
+    tm["nkey"] = tm["name"].map(name_key)
+    tm["dob"] = pd.to_datetime(tm["date_of_birth"], errors="coerce")
+    tm["dob_year"] = tm["dob"].dt.year
+    tm["market_value_m"] = tm["market_value_in_eur"] / 1e6
+    tm["contract_exp"] = pd.to_datetime(tm["contract_expiration_date"], errors="coerce")
+    return tm
+
+
+
+def _surname_match(nk: str, born, squad: str, by_year: dict) -> pd.DataFrame:
+    """Last-resort stage for nickname / shortened-name variants ('Andy' vs 'Andrew Robertson').
+    Requires an EXACT birth year, one name's surname (last token) contained in the other, and either a compatible
+    first name (same first two letters) or a matching club."""
+    toks = nk.split()
+    if pd.isna(born) or len(toks) < 2 or int(born) not in by_year:
+        return by_year.get(-1, pd.DataFrame())
+    pool = by_year[int(born)]
+    club_key = name_key(squad)
+    keep = []
+    for idx, cand_key, club in zip(pool.index, pool["nkey"], pool["current_club_name"]):
+        ct = cand_key.split()
+        if len(ct) < 2 or not (toks[-1] in ct[1:] or ct[-1] in toks[1:]):
+            continue                              # the shared token must be a SURNAME (last token)
+        first_ok = toks[0][:2] == ct[0][:2]
+        club_ok = fuzz.WRatio(club_key, name_key(club)) >= 85
+        if first_ok or club_ok:
+            keep.append(idx)
+    return pool.loc[keep] if keep else pool.iloc[0:0]
+
+def match_transfermarkt(players: pd.DataFrame, tm: pd.DataFrame) -> pd.DataFrame:
+    by_year = {int(y): g for y, g in tm.groupby("dob_year")}
+    rows = []
+    for r in players.itertuples(index=False):
+        nk, born = name_key(r.player), r.born
+        if pd.notna(born):
+            parts = [by_year[y] for y in (int(born) - 1, int(born), int(born) + 1) if y in by_year]
+            cands, cutoff = (pd.concat(parts) if parts else tm.iloc[0:0]), FUZZY_CUTOFF
+        else:                                     # no birth year -> exact name only
+            cands, cutoff = tm, 100
+        if cands.empty:
+            rows.append((r.pkey, None, 0.0, "none")); continue
+
+        exact = cands[cands["nkey"] == nk]
+        if not exact.empty:
+            pool, score, method = exact, 100.0, "exact"
+        else:
+            hits = process.extract(nk, cands["nkey"], scorer=fuzz.WRatio, score_cutoff=cutoff, limit=6)
+            if hits:
+                top = max(h[1] for h in hits)
+                pool = cands.loc[[h[2] for h in hits if h[1] >= top - 1.0]]
+                score, method = float(top), "fuzzy"
+            else:
+                pool = _surname_match(nk, born, r.squad, by_year)
+                if pool.empty:
+                    rows.append((r.pkey, None, 0.0, "none")); continue
+                score, method = 80.0, "surname"
+
+        if len(pool) > 1:                          # namesakes: year -> club -> recency -> value
+            club_key = name_key(r.squad)
+            pool = pool.assign(
+                _dy=(pool["dob_year"] - born).abs() if pd.notna(born) else 0,
+                _club=pool["current_club_name"].map(lambda c: fuzz.WRatio(club_key, name_key(c))),
+            ).sort_values(["_dy", "_club", "last_season", "market_value_m"],
+                          ascending=[True, False, False, False])
+        rows.append((r.pkey, pool.index[0], score, method))
+    m = pd.DataFrame(rows, columns=["pkey", "tm_idx", "match_score", "match_method"])
+    m = m.dropna(subset=["tm_idx"]).astype({"tm_idx": int})
+    info = tm.loc[m["tm_idx"], ["player_id", "name", "current_club_name", "dob", "market_value_m",
+                                "contract_exp"]].reset_index(drop=True)
+    info.columns = ["tm_player_id", "tm_match_name", "tm_club", "dob", "actual_value_m", "contract_exp"]
+    return pd.concat([m.drop(columns="tm_idx").reset_index(drop=True), info], axis=1)
+
+
+# ---------------------------------------------------------------------------- roles
+def classify_role(row: pd.Series) -> str:
+    """FBref 'Pos' only has GK/DF/MF/FW combinations (no LB/RW tags), so use the first
+    token as the primary role and the second as a hint; NaN-safe when advanced data is missing."""
+    pos = str(row.get("pos_full", "")).upper().replace(" ", "")
+    toks = [t[:2] for t in pos.split(",") if t]
+    primary, secondary = (toks + ["", ""])[:2]
+    g = lambda k: row.get(k) if pd.notna(row.get(k)) else np.nan
+    prgc, prgp, clr, sh = g("prgc_per90"), g("prgp_per90"), g("clr_per90"), g("sh_per90")
+    xag, gls, ast = g("xag_per90"), g("gls_per90"), g("ast_per90")
+    tkl, itc = g("tkl_per90"), g("int_per90")
+
+    if primary == "GK":
         return "GK"
-
-    # 1. Defenders (Fullbacks vs Center-Backs)
-    if "DF" in raw_pos and "FW" not in raw_pos:
-        # Explicit wide-defender tags from source
-        if any(tag in raw_pos for tag in ["LB", "RB", "WB"]):
+    if primary == "DF":
+        if secondary == "MF":
             return "FULLBACK"
-        
-        # Statistically distinguish pure CBs from Fullbacks:
-        # Fullbacks carry heavily (prgc >= 1.8) and contest fewer central clearances (clr < 2.2)
-        prgc = row.get("prgc_per90", 0)
-        clr = row.get("clr_per90", 0)
-        
-        if prgc >= 1.8 and clr < 2.2:
+        if pd.notna(prgc) and prgc >= 1.8 and (pd.isna(clr) or clr < 2.2):
             return "FULLBACK"
-        
         return "CB"
-
-    # 2. Attackers (Strikers vs Wingers)
-    if "FW" in raw_pos:
-        if any(tag in raw_pos for tag in ["LW", "RW", "LM", "RM"]) or row.get("prgc_per90", 0) >= 2.3:
+    if primary == "FW":
+        if pd.notna(prgc) and prgc >= 2.3:
             return "WINGER"
-        if "MF" in raw_pos and row.get("prgp_per90", 0) >= 4.0:
+        if secondary == "MF" and pd.notna(prgp) and prgp >= 4.0:
             return "CAM"
+        if secondary == "MF" and not row.get("has_advanced", 0):
+            return "WINGER"
         return "ST"
-
-    # 3. Midfielders (CAM vs CM vs CDM)
-    if "MF" in raw_pos:
-        if (
-            row.get("sh_per90", 0) >= 1.6
-            or row.get("xag_per90", 0) >= 0.14
-            or (row.get("gls_per90", 0) + row.get("ast_per90", 0)) >= 0.28
-        ):
-            return "CAM"
-
-        defensive_actions = row.get("tkl_per90", 0) + row.get("int_per90", 0)
-        if defensive_actions >= 2.8 and row.get("sh_per90", 0) < 1.2:
+    # midfield
+    if (pd.notna(sh) and sh >= 1.6) or (pd.notna(xag) and xag >= 0.14) or \
+       (np.nansum([gls, ast]) >= 0.28 and pd.notna(gls)):
+        return "CAM"
+    if pd.notna(itc):
+        defensive = (tkl + itc) if pd.notna(tkl) else itc * 2.4
+        if defensive >= 2.8 and (pd.isna(sh) or sh < 1.2):
             return "CDM"
-
-        return "CM"
-
     return "CM"
 
+
+# ---------------------------------------------------------------------------- model
+def _xgb(**kw):
+    return XGBRegressor(n_estimators=400, learning_rate=0.03, max_depth=5, subsample=0.8,
+                        colsample_bytree=0.8, random_state=42, n_jobs=-1, **kw)
+
+
 def build_valuation_model():
-    print("Loading multi-season datasets...")
+    ps = build_player_seasons()
 
-    # 1. Load historical seasons (2021 through 2024)
-    try:
-        df_history = clean_frame(pd.read_csv("data/fbref_multi_season.csv"))
-    except FileNotFoundError:
-        hist_files = [
-            ("data/cleaned_2021-22.csv", "2021-2022"),
-            ("data/cleaned_2022-23.csv", "2022-2023"),
-            ("data/cleaned_2023-24.csv", "2023-2024"),
-        ]
-        loaded = []
-        for path, season_label in hist_files:
-            if os.path.exists(path):
-                temp = clean_frame(pd.read_csv(path))
-                if "season" not in temp.columns:
-                    temp["season"] = season_label
-                loaded.append(temp)
-        df_history = pd.concat(loaded, ignore_index=True) if loaded else pd.DataFrame()
+    # ---- timeline export (per-season, NaNs intact, slim schema)
+    tl_cols = ["pkey", "player", "born", "pos", "squad", "league", "season", "min", "age"] + RAW_STATS + PER90_COLS
+    ps[ps["min"] >= 90][tl_cols].to_csv(DATA_DIR / "player_timeline_db.csv", index=False)
 
-    # 2. Load modern seasons (2024-2025 and 2025-2026)
-    try:
-        df_2425 = clean_frame(pd.read_csv("data/fbref_2425.csv"))
-        df_2425["season"] = "2024-2025"
-    except FileNotFoundError:
-        df_2425 = pd.DataFrame()
-        
-    try:
-        df_2526 = clean_frame(pd.read_csv("data/fbref_2526.csv"))
-        df_2526["season"] = "2025-2026"
-    except FileNotFoundError:
-        df_2526 = pd.DataFrame()
+    players = aggregate_players(ps)
+    print(f"\nUnique players: {len(players):,}")
+    cur = current_season_start()
+    players = players[(players["min"] >= MIN_CAREER_MINUTES)
+                      & (players["last_season_start"] >= cur - (RECENT_SEASONS - 1))].copy()
+    print(f"After >= {MIN_CAREER_MINUTES} min and played in last {RECENT_SEASONS} seasons: {len(players):,}")
 
-    # 3. Load freshly scraped live data via SeleniumBase
-    try:
-        df_live = clean_frame(pd.read_csv("data/live_fbref_data.csv"))
-        df_live["season"] = "2026-2027"
-    except FileNotFoundError:
-        print("Live FBref data not found. Continuing with historical data only.")
-        df_live = pd.DataFrame()
+    print("Matching Transfermarkt (birth-year blocked)...")
+    tm = _prep_tm()
+    match = match_transfermarkt(players, tm)
+    df = players.merge(match, on="pkey", how="left")
 
-    # Merge master timeline
-    dfs_to_concat = [d for d in [df_history, df_2425, df_2526, df_live] if not d.empty]
-    df_raw = clean_frame(pd.concat(dfs_to_concat, ignore_index=True))
+    unmatched = df[df["actual_value_m"].isna()][["player", "squad", "league", "born", "min", "last_season"]]
+    unmatched.sort_values("min", ascending=False).to_csv(DATA_DIR / "unmatched_players.csv", index=False)
+    print(f"  matched {df['actual_value_m'].notna().sum():,} | unmatched {len(unmatched):,} "
+          f"(listed in data/unmatched_players.csv) | fuzzy {(df['match_method'] == 'fuzzy').sum()}")
 
-    if "league" not in df_raw.columns:
-        df_raw["league"] = "Unknown"
+    df = df.dropna(subset=["actual_value_m"])
+    df = df[df["actual_value_m"] > MIN_MARKET_VALUE_M].copy()
 
-    df_raw["min"] = pd.to_numeric(df_raw["min"], errors="coerce").fillna(0)
+    # club: if he moved mid-season prefer the stint that matches Transfermarkt's current club
+    def pick_squad(r):
+        sq = r["latest_squads"]
+        if isinstance(sq, list) and len(sq) > 1 and isinstance(r["tm_club"], str):
+            best = max(sq, key=lambda s: fuzz.WRatio(name_key(s), name_key(r["tm_club"])))
+            return best
+        return r["squad"]
+    df["squad"] = df.apply(pick_squad, axis=1)
 
-    # 4. Standardize and Map Stat Column Aliases
-    alias_map = {
-        "goals": "gls",
-        "assists": "ast",
-        "expected_goals": "xg",
-        "expected_assists": "xag",
-        "xa": "xag",
-        "shots": "sh",
-        "shots_on_target": "sot",
-        "progressive_carries": "prgc",
-        "prg_c": "prgc",
-        "progressive_passes": "prgp",
-        "prg_p": "prgp",
-        "tackles": "tkl",
-        "interceptions": "int",
-        "clearances": "clr",
-        "blocks": "blk",
-        "aerials_won": "aer_won",
-        "saves": "saves",
-        "psxg_net": "psxg_net",
-    }
+    # ---- age / contract relative to *today*, not a hard-coded year
+    t = pd.Timestamp(today())
+    age_dob = (t - df["dob"]).dt.days / 365.25
+    df["age_clean"] = age_dob.fillna(today().year - df["born"]).fillna(df["age"]).round(1)
+    df["contract_years_left"] = ((df["contract_exp"] - t).dt.days / 365.25).clip(lower=0, upper=7)  # NaN kept
 
-    safe_rename = {k: v for k, v in alias_map.items() if k in df_raw.columns and v not in df_raw.columns}
-    df_raw.rename(columns=safe_rename, inplace=True)
-    df_raw = df_raw.loc[:, ~df_raw.columns.duplicated()].copy()
+    df["pos_clean"] = df.apply(classify_role, axis=1)
+    df["raw_pos"] = df["pos_full"]
 
-    raw_stats = [
-        "gls", "ast", "xg", "xag", "sh", "sot",
-        "prgc", "prgp", "tkl", "int", "clr", "blk",
-        "aer_won", "saves", "psxg_net"
-    ]
+    # unique display names (two different 'Aaron Ramsey's must not collide in the app)
+    dup = df["player"].duplicated(keep=False)
+    df["fb_name"] = df["player"]
+    df.loc[dup, "player"] = df.loc[dup, "player"] + " (" + df.loc[dup, "squad"] + ")"
 
-    df_raw["90s"] = df_raw["min"] / 90.0
-
-    for stat in raw_stats:
-        if stat in df_raw.columns:
-            col_series = df_raw[stat].iloc[:, 0] if isinstance(df_raw[stat], pd.DataFrame) else df_raw[stat]
-            df_raw[stat] = pd.to_numeric(col_series, errors="coerce").fillna(0.0)
-            df_raw[f"{stat}_per90"] = np.where(df_raw["90s"] > 0, df_raw[stat] / df_raw["90s"], 0.0)
-        else:
-            df_raw[f"{stat}_per90"] = 0.0
-
-    stat_per90_cols = [f"{stat}_per90" for stat in raw_stats]
-
-    # 5. Time-Decay Weighting (Shifted forward to account for the live scrape)
-    season_weights = {
-        "2026-2027": 1.0,
-        "2025-2026": 0.85,
-        "2024-2025": 0.65,
-        "2023-2024": 0.45,
-        "2023-24": 0.45,
-        "2022-2023": 0.25,
-        "2022-23": 0.25,
-        "2021-2022": 0.10,
-        "2021-22": 0.10,
-    }
-
-    if "season" in df_raw.columns:
-        df_raw["season_weight"] = df_raw["season"].map(season_weights).fillna(0.5)
-    else:
-        df_raw["season_weight"] = 1.0
-
-    df_raw["weighted_90s"] = df_raw["90s"] * df_raw["season_weight"]
-
-    agg_dict = {
-        "min": "sum",
-        "weighted_90s": "sum"
-    }
-
-    for col in stat_per90_cols:
-        df_raw[f"{col}_weighted"] = df_raw[col] * df_raw["weighted_90s"]
-        agg_dict[f"{col}_weighted"] = "sum"
-        
-    # Save the un-aggregated timeline for the Form vs Baseline UI
-    os.makedirs("data", exist_ok=True)
-    df_raw.to_csv("data/player_timeline_db.csv", index=False)
-    
-    # Generate unified player profiles
-    player_agg = df_raw.groupby("player", as_index=False).agg(agg_dict)
-
-    for col in stat_per90_cols:
-        player_agg[col] = np.where(
-            player_agg["weighted_90s"] > 0,
-            player_agg[f"{col}_weighted"] / player_agg["weighted_90s"],
-            0.0
-        )
-        player_agg.drop(columns=[f"{col}_weighted"], inplace=True)
-
-    player_agg.drop(columns=["weighted_90s"], inplace=True)
-
-    # 6. Extract latest profile meta-attributes
-    sort_col = "season" if "season" in df_raw.columns else "min"
-    df_latest = df_raw.sort_values(sort_col, ascending=False).drop_duplicates(subset=["player"]).copy()
-
-    meta_cols = ["player", "squad", "league", "age", "pos"]
-    available_meta = [c for c in meta_cols if c in df_latest.columns]
-
-    df_fb = df_latest[available_meta].merge(player_agg, on="player", how="left")
-    df_fb = df_fb[df_fb["min"] >= 1500].copy()
-
-    # 7. Load Transfermarkt Valuations & Contracts (Static DB in repo)
-    print("Loading Transfermarkt valuation and contract data...")
-    df_tm = clean_frame(pd.read_csv("data/players.csv"))
-
-    if "name" in df_tm.columns:
-        df_tm["player"] = df_tm["name"]
-
-    if "market_value_in_eur" in df_tm.columns:
-        df_tm["market_value_m"] = df_tm["market_value_in_eur"] / 1000000.0
-
-    if "contract_expiration_date" in df_tm.columns:
-        df_tm["contract_expiration_date"] = pd.to_datetime(df_tm["contract_expiration_date"], errors="coerce")
-        df_tm["contract_years_left"] = (df_tm["contract_expiration_date"].dt.year - 2026).fillna(2.0).clip(lower=0, upper=7)
-    else:
-        df_tm["contract_years_left"] = 2.0
-
-    tm_names = df_tm["player"].dropna().tolist()
-    tm_lookup = df_tm.set_index("player")["market_value_m"].to_dict()
-    tm_contract_lookup = df_tm.set_index("player")["contract_years_left"].to_dict()
-
-    def match_player_name(fb_name):
-        match = process.extractOne(fb_name, tm_names, scorer=fuzz.WRatio)
-        if match and match[1] >= 85:
-            return match[0]
-        return None
-
-    print("Fuzzy matching players with Transfermarkt records...")
-    df_fb["tm_match_name"] = df_fb["player"].apply(match_player_name)
-    df_fb["actual_value_m"] = df_fb["tm_match_name"].map(tm_lookup)
-    df_fb["contract_years_left"] = df_fb["tm_match_name"].map(tm_contract_lookup).fillna(2.0)
-
-    df_fb = df_fb.dropna(subset=["actual_value_m"]).copy()
-    df_fb = df_fb[df_fb["actual_value_m"] > 0.5].copy()
-    print(f"Calibrated dataset contains {len(df_fb)} qualified players.")
-
-    # 8. Clean Age and Apply Granular Tactical Roles
-    if "age" in df_fb.columns:
-        df_fb["age_clean"] = df_fb["age"].astype(str).str.split("-").str[0]
-        df_fb["age_clean"] = pd.to_numeric(df_fb["age_clean"], errors="coerce").fillna(25.0)
-    else:
-        df_fb["age_clean"] = 25.0
-
-    print("Classifying players into granular tactical roles...")
-    df_fb["pos_clean"] = df_fb.apply(classify_tactical_role, axis=1)
-
-    # 9. Encode Features with Positional Indicators
-    df_fb["raw_pos_clean"] = df_fb["pos_clean"]
-    df_fb["raw_league"] = df_fb["league"]
-
-    df_encoded = pd.get_dummies(df_fb, columns=["league", "pos_clean"], drop_first=False)
-
-    df_encoded["pos_clean"] = df_fb["raw_pos_clean"]
-    df_encoded["league"] = df_fb["raw_league"]
-    df_encoded.drop(columns=["raw_pos_clean", "raw_league"], inplace=True)
-
-    feature_candidates = [
-        "age_clean", "min", "contract_years_left"
-    ] + stat_per90_cols
-
-    dummy_cols = [c for c in df_encoded.columns if c.startswith("league_") or c.startswith("pos_clean_")]
-    feature_cols = [c for c in feature_candidates if c in df_encoded.columns] + dummy_cols
-
-    X = df_encoded[feature_cols].copy()
-    for col in feature_cols:
-        X[col] = pd.to_numeric(X[col], errors="coerce").fillna(0.0)
-
-    y_raw = df_encoded["actual_value_m"].values
+    # ---- design matrix (NaN preserved for XGBoost)
+    league_d = pd.get_dummies(df["league"], prefix="league").astype(int)
+    pos_d = pd.get_dummies(df["pos_clean"], prefix="pos_clean").astype(int)
+    feats = ["age_clean", "min", "contract_years_left", "has_advanced"] + PER90_COLS
+    X = pd.concat([df[feats].apply(pd.to_numeric, errors="coerce"), league_d, pos_d], axis=1)
+    y_raw = df["actual_value_m"].values
     y_log = np.log1p(y_raw)
 
-    X_train, X_test, y_train_log, y_test_log, y_train_raw, y_test_raw = train_test_split(
-        X, y_log, y_raw, test_size=0.2, random_state=42
-    )
-
-    # 10. Base Valuation Model
-    model = XGBRegressor(
-        n_estimators=400,
-        learning_rate=0.03,
-        max_depth=5,
-        subsample=0.8,
-        colsample_bytree=0.8,
-        random_state=42
-    )
-    model.fit(X_train, y_train_log)
-
-    test_predictions = np.expm1(model.predict(X_test))
-    test_r2 = r2_score(y_test_raw, test_predictions)
-    test_mae = mean_absolute_error(y_test_raw, test_predictions)
-
-    print("\n--- Model Evaluation ---")
-    print(f"XGBoost R² Score: {test_r2:.3f}")
-    print(f"Mean Absolute Error: €{test_mae:.2f}M")
-
-    all_predictions = np.expm1(model.predict(X))
-    df_encoded["predicted_value_m"] = np.round(all_predictions, 2)
-
-    # Quantile Regression Models (15th and 85th Percentiles for Valuation Ranges)
+    # ---- OUT-OF-FOLD predictions: every player is scored by a model that never saw him
+    print(f"Training XGBoost with 5-fold out-of-fold scoring on {len(X):,} players, {X.shape[1]} features...")
+    cv = KFold(n_splits=5, shuffle=True, random_state=42)
+    oof_log = cross_val_predict(_xgb(), X, y_log, cv=cv)
     try:
-        model_low = XGBRegressor(
-            n_estimators=400, learning_rate=0.03, max_depth=5,
-            subsample=0.8, colsample_bytree=0.8, objective="reg:quantileerror",
-            quantile_alpha=0.15, random_state=42
-        )
-        model_low.fit(X_train, y_train_log)
-        df_encoded["pred_value_low_m"] = np.round(np.expm1(model_low.predict(X)), 2)
+        lo_log = cross_val_predict(_xgb(objective="reg:quantileerror", quantile_alpha=0.15), X, y_log, cv=cv)
+        hi_log = cross_val_predict(_xgb(objective="reg:quantileerror", quantile_alpha=0.85), X, y_log, cv=cv)
+    except Exception as exc:                      # older xgboost: residual-based fallback
+        print(f"  quantile objective unavailable ({exc}); using OOF residual quantiles")
+        res = y_log - oof_log
+        lo_log, hi_log = oof_log + np.quantile(res, 0.15), oof_log + np.quantile(res, 0.85)
+    lo_log, hi_log = np.minimum(lo_log, oof_log), np.maximum(hi_log, oof_log)   # no crossing bands
+    # Conformalised quantile regression: the raw quantile models are under-dispersed out of
+    # sample, so widen/shrink both edges by the score that makes OOF coverage hit the nominal 70%.
+    score = np.maximum(lo_log - y_log, y_log - hi_log)
+    q = np.quantile(score, min(1.0, 0.70 * (1 + 1 / len(score))))
+    lo_log, hi_log = lo_log - q, hi_log + q
 
-        model_high = XGBRegressor(
-            n_estimators=400, learning_rate=0.03, max_depth=5,
-            subsample=0.8, colsample_bytree=0.8, objective="reg:quantileerror",
-            quantile_alpha=0.85, random_state=42
-        )
-        model_high.fit(X_train, y_train_log)
-        df_encoded["pred_value_high_m"] = np.round(np.expm1(model_high.predict(X)), 2)
-    except Exception:
-        # Fallback to residual standard error if quantile objective is unavailable
-        residuals = y_test_raw - test_predictions
-        std_err = np.std(residuals)
-        df_encoded["pred_value_low_m"] = np.round(np.clip(all_predictions - 1.04 * std_err, 0.5, None), 2)
-        df_encoded["pred_value_high_m"] = np.round(all_predictions + 1.04 * std_err, 2)
+    pred = np.expm1(oof_log)
+    df["predicted_value_m"] = np.round(pred, 2)
+    df["pred_value_low_m"] = np.round(np.clip(np.expm1(lo_log), 0, None), 2)
+    df["pred_value_high_m"] = np.round(np.expm1(hi_log), 2)
+    df["surplus_value_m"] = np.round(pred - y_raw, 2)
+    df["surplus_log"] = np.round(oof_log - y_log, 4)                       # log-space edge
+    df["surplus_pct"] = np.round(100 * np.expm1(oof_log - y_log), 1)      # (1+pred)/(1+actual) - 1
 
-    df_encoded["surplus_value_m"] = np.round(df_encoded["predicted_value_m"] - df_encoded["actual_value_m"], 2)
+    r2, mae = r2_score(y_raw, pred), mean_absolute_error(y_raw, pred)
+    r2_log = r2_score(y_log, oof_log)
+    cover = float(((y_raw >= df["pred_value_low_m"]) & (y_raw <= df["pred_value_high_m"])).mean())
+    print("\n--- Out-of-fold model evaluation (honest, every row) ---")
+    print(f"R2 (EUR): {r2:.3f} | R2 (log): {r2_log:.3f} | MAE: EUR {mae:.2f}M | 15-85 band coverage: {cover:.0%}")
 
-    os.makedirs("data", exist_ok=True)
-    export_path = "data/master_scouting_db.csv"
-    df_encoded.to_csv(export_path, index=False)
-    print(f"Saved master scouting database to {export_path}")
+    # ---- export (keeps the columns the app already expects + the new ones)
+    out = pd.concat([df.reset_index(drop=True), league_d.reset_index(drop=True),
+                     pos_d.reset_index(drop=True)], axis=1)
+    out = out.drop(columns=["latest_squads", "contract_exp", "last_season_start", "adv_last_season_start",
+                            "tm_player_id"], errors="ignore")
+    out.to_csv(DATA_DIR / "master_scouting_db.csv", index=False)
+    write_json(DATA_DIR / "model_metrics.json", {
+        "built_on": str(today()), "season_in_progress": f"{cur}-{cur + 1}",
+        "players": int(len(out)), "unmatched_players": int(len(unmatched)),
+        "oof_r2_eur": round(float(r2), 3), "oof_r2_log": round(float(r2_log), 3),
+        "oof_mae_eur_m": round(float(mae), 2), "band_coverage_15_85": round(cover, 3),
+        "players_without_advanced_stats": int((out["has_advanced"] == 0).sum()),
+    })
+    print(f"Saved data/master_scouting_db.csv ({len(out):,} players)")
+
+    # fail loudly so the CI job never commits a broken database
+    if len(out) < 1500 or r2 < 0.3:
+        sys.exit(f"Sanity check failed: {len(out)} players, OOF R2={r2:.2f}")
 
 
 if __name__ == "__main__":
