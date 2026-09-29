@@ -1145,10 +1145,12 @@ with tab1:
                         club_rows = system_engine.club_profiles[
                             system_engine.club_profiles["squad"].str.lower() == selected_squad.lower()
                         ]
-                        # Use the SAME position-group profile calculate_system_fit used for
-                        # the gauge above, not an arbitrary row for the club (club_profiles
-                        # now has one row per club PER position group - audit #10).
-                        group_rows = club_rows[club_rows.get("pos_group") == fit_data.get("position_group")]
+                        # SAFE EXTRACT: Fallback to club average if 'pos_group' is missing from remote data
+                        if "pos_group" in club_rows.columns:
+                            group_rows = club_rows[club_rows["pos_group"] == fit_data.get("position_group")]
+                        else:
+                            group_rows = club_rows
+                            
                         s_dict = (group_rows.iloc[0] if not group_rows.empty else club_rows.iloc[0]).to_dict()
 
                         try:
@@ -1405,14 +1407,21 @@ with tab4:
             # being searched - comparing a defensive metric to the club's attacking archetype
             # (or vice versa) was the original bug.
             club_rows = club_df[club_df["squad"].str.lower() == gap_target_club.lower()]
-            search_groups = [UNIT_TO_GROUP[target_unit]] if target_unit in UNIT_TO_GROUP \
-                else club_rows["pos_group"].unique().tolist()
-            club_rows = club_rows[club_rows["pos_group"].isin(search_groups)]
+            
+            # SAFE EXTRACT: Ensure pos_group exists before subsetting
+            if "pos_group" in club_rows.columns:
+                search_groups = [UNIT_TO_GROUP.get(target_unit, "ALL")] if target_unit in UNIT_TO_GROUP \
+                    else club_rows["pos_group"].unique().tolist()
+                club_rows = club_rows[club_rows["pos_group"].isin(search_groups)]
 
             best = None  # (gap, feature, pos_group, archetype)
             for _, row in club_rows.iterrows():
                 archetype = row.get("tactical_archetype", "Balanced Mid-Block & Pragmatic")
                 ideal = ARCHETYPE_PROFILES.get(archetype, ARCHETYPE_PROFILES["Balanced Mid-Block & Pragmatic"])
+                
+                # Default to "Squad" if the pos_group column is missing
+                current_group = row.get("pos_group", "Squad")
+                
                 for feat in STYLE_FEATURES:
                     if feat not in row.index or feat not in ideal or pd.isna(row[feat]):
                         continue
@@ -1420,8 +1429,7 @@ with tab4:
                     club_z = (row[feat] - club_df[feat].mean()) / (feat_std if feat_std and feat_std > 0 else 1.0)
                     gap = ideal[feat] - club_z
                     if best is None or gap > best[0]:
-                        best = (gap, feat, row["pos_group"], archetype)
-
+                        best = (gap, feat, current_group, archetype)
             if best is None:
                 st.warning(f"No profiled cohort for {gap_target_club} in this department "
                           "(too few qualifying minutes to build a reliable position profile).")
