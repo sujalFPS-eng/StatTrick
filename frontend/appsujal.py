@@ -98,6 +98,11 @@ def format_value(val, col_name: str) -> str:
             return f"{'+' if float(val) >= 0 else ''}{float(val):.1f}%"
         except (ValueError, TypeError):
             return str(val)
+    if col_name == "contract_years_left":
+        try:
+            return f"{float(val):.1f}"
+        except (ValueError, TypeError):
+            return str(val)
     if "per90" in col_name:
         try:
             return f"{float(val):.2f}"
@@ -160,42 +165,48 @@ def get_position_form_metric(pos_tag: str, df_p: pd.DataFrame):
     def get_series(col):
         return pd.to_numeric(df_p.get(col, np.nan), errors="coerce")
 
+    # 1. Determine the primary tracking metric based on position
     if "GK" in pos_tag:
-        has_psxg = "psxg_net_per90" in df_p.columns and df_p["psxg_net_per90"].abs().sum() > 0
-        if has_psxg:
-            return get_series("psxg_net_per90"), "Net PSxG / 90 (Shot Stopping Delta)"
-        return get_series("saves_per90"), "Saves / 90"
+        psxg = get_series("psxg_net_per90")
+        if psxg.abs().sum() > 0:
+            metric, title = psxg, "Net PSxG / 90 (Shot Stopping Delta)"
+        else:
+            metric, title = get_series("saves_per90"), "Saves / 90"
 
     elif "CB" in pos_tag:
         tkl = get_series("tkl_per90")
         int_c = get_series("int_per90")
         clr = get_series("clr_per90")
-        
-        if df_p.get("clr_per90") is not None and df_p["clr_per90"].notna().any():
-            return tkl.add(int_c, fill_value=0).add(clr, fill_value=0), "Defensive Interventions / 90 (Tkl+Int+Clr)"
-        return tkl.add(int_c, fill_value=0), "Defensive Actions / 90 (Tackles + Interceptions)"
+        metric = tkl.add(int_c, fill_value=0).add(clr, fill_value=0)
+        title = "Defensive Interventions / 90 (Tkl+Int+Clr)"
 
     elif "CDM" in pos_tag:
-        return get_series("tkl_per90").add(get_series("int_per90"), fill_value=0), "Ball-Winning Actions / 90 (Tackles + Interceptions)"
+        metric = get_series("tkl_per90").add(get_series("int_per90"), fill_value=0)
+        title = "Ball-Winning Actions / 90 (Tackles + Interceptions)"
 
     elif "FULLBACK" in pos_tag or pos_tag == "CM":
-        return get_series("prgp_per90").add(get_series("prgc_per90"), fill_value=0), "Progression Volume / 90 (PrgP + PrgC)"
+        metric = get_series("prgp_per90").add(get_series("prgc_per90"), fill_value=0)
+        title = "Progression Volume / 90 (PrgP + PrgC)"
 
     elif "CAM" in pos_tag:
-        return get_series("xag_per90").add(get_series("prgp_per90"), fill_value=0), "Playmaking Output / 90 (xA + PrgP)"
+        metric = get_series("xag_per90").add(get_series("prgp_per90"), fill_value=0)
+        title = "Playmaking Output / 90 (xA + PrgP)"
 
     else:  
-        xg = get_series("xg_per90")
-        xa = get_series("xag_per90")
-        form = xg.add(xa, fill_value=0)
+        metric = get_series("xg_per90").add(get_series("xag_per90"), fill_value=0)
+        title = "Expected Goal Contribution / 90 (xG + xA)"
         
-        # FIX: Fallback to actuals if the scraper missed Opta data for most seasons (requires 2+ points to draw a line)
-        if form.count() < 2 or (form == 0).all():
-            gls = get_series("gls_per90")
-            ast = get_series("ast_per90")
-            return gls.add(ast, fill_value=0), "Actual Goal Contribution / 90 (Gls + Ast)"
-            
-        return form, "Expected Goal Contribution / 90 (xG + xA)"
+    # 2. UNIVERSAL FALLBACK
+    # Clean zeros into NaNs so the Plotly graph cleanly drops the line instead of crashing to 0.
+    metric_clean = metric.replace(0.0, np.nan)
+    
+    # If the player has fewer than 2 valid seasons of tracking data, default to Actuals
+    if metric_clean.count() < 2 or (metric_clean == 0).all():
+        gls = get_series("gls_per90")
+        ast = get_series("ast_per90")
+        return gls.add(ast, fill_value=0), "Actual Goal Contribution / 90 (Gls + Ast)"
+        
+    return metric_clean, title
 
 # --- 2. PRESENTATION HELPERS ---
 def initials(name: str) -> str:
