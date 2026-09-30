@@ -1,6 +1,6 @@
-"""StatTrick valuation pipeline (patched).
+"""StatTrick valuation pipeline (patched for PostgreSQL).
 
-What changed vs. the original (numbers refer to the audit):
+What changed vs. the original:
   #1  every player-season is collapsed to ONE row (key = accent-free name + birth year +
       season + club); richer sources fill gaps in poorer ones instead of being added twice.
   #2  explicit per-source column maps (no more global alias dict that missed
@@ -33,6 +33,7 @@ from src.common import (
     DATA_DIR, canon_club, canon_league, canon_season, current_season_start, make_pkey,
     name_key, season_start, season_weight, today, write_json,
 )
+from src.database import engine
 
 MIN_CAREER_MINUTES = 1500      # deduplicated minutes across all seasons
 MIN_MARKET_VALUE_M = 0.25      # was 0.5 - less truncation of the target
@@ -71,10 +72,13 @@ SOURCES = [
 ]
 
 
-def _read(path: Path) -> pd.DataFrame:
-    df = pd.read_csv(path, low_memory=False)
-    df.columns = [str(c).strip().lower() for c in df.columns]
-    return df.loc[:, ~df.columns.duplicated()].copy()      # keep first of any duplicate header
+def _read(path: Path) -> pd.DataFrame | None:
+    try:
+        df = pd.read_csv(path, low_memory=False)
+        df.columns = [str(c).strip().lower() for c in df.columns]
+        return df.loc[:, ~df.columns.duplicated()].copy()      # keep first of any duplicate header
+    except pd.errors.EmptyDataError:
+        return None
 
 
 def _num(s: pd.Series) -> pd.Series:
@@ -86,7 +90,12 @@ def load_source(fname, tag, rank, season, colmap, drop) -> pd.DataFrame | None:
     if not path.exists():
         print(f"  ! missing {fname} (skipped)")
         return None
+    
     df = _read(path)
+    if df is None:
+        print(f"  ! empty file {fname} (skipped)")
+        return None
+        
     df = df.drop(columns=[c for c in drop if c in df.columns])
     df = df.rename(columns=colmap)
     df = df.loc[:, ~df.columns.duplicated()].copy()
@@ -322,7 +331,9 @@ def build_valuation_model():
 
     # ---- timeline export (per-season, NaNs intact, slim schema)
     tl_cols = ["pkey", "player", "born", "pos", "squad", "league", "season", "min", "age"] + RAW_STATS + PER90_COLS
-    ps[ps["min"] >= 90][tl_cols].to_csv(DATA_DIR / "player_timeline_db.csv", index=False)
+    
+    print("Uploading player_timeline to Neon Postgres...")
+    ps[ps["min"] >= 90][tl_cols].to_sql("player_timeline", con=engine, if_exists="replace", index=False)
 
     players = aggregate_players(ps)
     print(f"\nUnique players: {len(players):,}")
@@ -337,6 +348,7 @@ def build_valuation_model():
     df = players.merge(match, on="pkey", how="left")
 
     unmatched = df[df["actual_value_m"].isna()][["player", "squad", "league", "born", "min", "last_season"]]
+    # Keeping unmatched as local CSV since this acts purely as a debug log for the modeler
     unmatched.sort_values("min", ascending=False).to_csv(DATA_DIR / "unmatched_players.csv", index=False)
     print(f"  matched {df['actual_value_m'].notna().sum():,} | unmatched {len(unmatched):,} "
           f"(listed in data/unmatched_players.csv) | fuzzy {(df['match_method'] == 'fuzzy').sum()}")
@@ -367,31 +379,50 @@ def build_valuation_model():
     df["fb_name"] = df["player"]
     df.loc[dup, "player"] = df.loc[dup, "player"] + " (" + df.loc[dup, "squad"] + ")"
 
-    # ---- design matrix (NaN preserved for XGBoost)
+   # ---- design matrix (NaN preserved for XGBoost)
     league_d = pd.get_dummies(df["league"], prefix="league").astype(int)
     pos_d = pd.get_dummies(df["pos_clean"], prefix="pos_clean").astype(int)
-    feats = ["age_clean", "min", "contract_years_left", "has_advanced"] + PER90_COLS
-    X = pd.concat([df[feats].apply(pd.to_numeric, errors="coerce"), league_d, pos_d], axis=1)
+    
+    # Model A: Full Features (Historical)
+    feats_adv = ["age_clean", "min", "contract_years_left", "has_advanced"] + PER90_COLS
+    X_adv = pd.concat([df[feats_adv].apply(pd.to_numeric, errors="coerce"), league_d, pos_d], axis=1)
+    
+    # Model B: Basic Features (Live / No Opta)
+    basic_per90 = [f"{s}_per90" for s in RAW_STATS if s not in ADVANCED]
+    feats_basic = ["age_clean", "min", "contract_years_left"] + basic_per90
+    X_basic = pd.concat([df[feats_basic].apply(pd.to_numeric, errors="coerce"), league_d, pos_d], axis=1)
+    
     y_raw = df["actual_value_m"].values
     y_log = np.log1p(y_raw)
 
-    # ---- OUT-OF-FOLD predictions: every player is scored by a model that never saw him
-    print(f"Training XGBoost with 5-fold out-of-fold scoring on {len(X):,} players, {X.shape[1]} features...")
+    # ---- OUT-OF-FOLD predictions: Dual-Model Architecture
+    print(f"Training XGBoost Dual-Model Architecture on {len(df):,} players...")
     cv = KFold(n_splits=5, shuffle=True, random_state=42)
-    oof_log = cross_val_predict(_xgb(), X, y_log, cv=cv)
-    try:
-        lo_log = cross_val_predict(_xgb(objective="reg:quantileerror", quantile_alpha=0.15), X, y_log, cv=cv)
-        hi_log = cross_val_predict(_xgb(objective="reg:quantileerror", quantile_alpha=0.85), X, y_log, cv=cv)
-    except Exception as exc:                      # older xgboost: residual-based fallback
-        print(f"  quantile objective unavailable ({exc}); using OOF residual quantiles")
-        res = y_log - oof_log
-        lo_log, hi_log = oof_log + np.quantile(res, 0.15), oof_log + np.quantile(res, 0.85)
-    lo_log, hi_log = np.minimum(lo_log, oof_log), np.maximum(hi_log, oof_log)   # no crossing bands
-    # Conformalised quantile regression: the raw quantile models are under-dispersed out of
-    # sample, so widen/shrink both edges by the score that makes OOF coverage hit the nominal 70%.
-    score = np.maximum(lo_log - y_log, y_log - hi_log)
-    q = np.quantile(score, min(1.0, 0.70 * (1 + 1 / len(score))))
-    lo_log, hi_log = lo_log - q, hi_log + q
+    
+    def _train_and_conformalize(X_matrix, name):
+        print(f"  -> Training Model {name} ({X_matrix.shape[1]} features)...")
+        oof_log = cross_val_predict(_xgb(), X_matrix, y_log, cv=cv)
+        try:
+            lo_log = cross_val_predict(_xgb(objective="reg:quantileerror", quantile_alpha=0.15), X_matrix, y_log, cv=cv)
+            hi_log = cross_val_predict(_xgb(objective="reg:quantileerror", quantile_alpha=0.85), X_matrix, y_log, cv=cv)
+        except Exception as exc:
+            res = y_log - oof_log
+            lo_log, hi_log = oof_log + np.quantile(res, 0.15), oof_log + np.quantile(res, 0.85)
+        
+        # Prevent bands from crossing the mean, then conformalize to hit 70% coverage
+        lo_log, hi_log = np.minimum(lo_log, oof_log), np.maximum(hi_log, oof_log)
+        score = np.maximum(lo_log - y_log, y_log - hi_log)
+        q = np.quantile(score, min(1.0, 0.70 * (1 + 1 / len(score))))
+        return oof_log, lo_log - q, hi_log + q
+        
+    oof_log_a, lo_log_a, hi_log_a = _train_and_conformalize(X_adv, "A (Advanced/Historical)")
+    oof_log_b, lo_log_b, hi_log_b = _train_and_conformalize(X_basic, "B (Basic/Live)")
+    
+    # Splice Predictions: Route to Model B if advanced stats are missing
+    has_adv = df["has_advanced"].astype(bool).values
+    oof_log = np.where(has_adv, oof_log_a, oof_log_b)
+    lo_log = np.where(has_adv, lo_log_a, lo_log_b)
+    hi_log = np.where(has_adv, hi_log_a, hi_log_b)
 
     pred = np.expm1(oof_log)
     df["predicted_value_m"] = np.round(pred, 2)
@@ -407,12 +438,25 @@ def build_valuation_model():
     print("\n--- Out-of-fold model evaluation (honest, every row) ---")
     print(f"R2 (EUR): {r2:.3f} | R2 (log): {r2_log:.3f} | MAE: EUR {mae:.2f}M | 15-85 band coverage: {cover:.0%}")
 
-    # ---- export (keeps the columns the app already expects + the new ones)
+   # ---- export (keeps the columns the app already expects + the new ones)
     out = pd.concat([df.reset_index(drop=True), league_d.reset_index(drop=True),
                      pos_d.reset_index(drop=True)], axis=1)
+                     
+    # RESTORE: Ensure the raw text column for the UI isn't lost among the dummies
+    if "league" not in out.columns and "league" in df.columns:
+        out["league"] = df["league"].values
+        
     out = out.drop(columns=["latest_squads", "contract_exp", "last_season_start", "adv_last_season_start",
                             "tm_player_id"], errors="ignore")
-    out.to_csv(DATA_DIR / "master_scouting_db.csv", index=False)
+    
+    print("Uploading players_master and player_timeline to Neon Postgres...")
+    out.to_sql("players_master", con=engine, if_exists="replace", index=False)
+    
+    # Push the timeline simultaneously with low_memory disabled to suppress dtype warnings
+    ps[ps["min"] >= 90][tl_cols].to_sql("player_timeline", con=engine, if_exists="replace", index=False)
+    
+    print(f"Uploaded players_master ({len(out):,} players) and player_timeline to Postgres.")
+    
     write_json(DATA_DIR / "model_metrics.json", {
         "built_on": str(today()), "season_in_progress": f"{cur}-{cur + 1}",
         "players": int(len(out)), "unmatched_players": int(len(unmatched)),
@@ -420,7 +464,7 @@ def build_valuation_model():
         "oof_mae_eur_m": round(float(mae), 2), "band_coverage_15_85": round(cover, 3),
         "players_without_advanced_stats": int((out["has_advanced"] == 0).sum()),
     })
-    print(f"Saved data/master_scouting_db.csv ({len(out):,} players)")
+    print(f"Uploaded players_master to Postgres ({len(out):,} players)")
 
     # fail loudly so the CI job never commits a broken database
     if len(out) < 1500 or r2 < 0.3:

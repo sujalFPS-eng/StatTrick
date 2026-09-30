@@ -23,8 +23,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import numpy as np
 import pandas as pd
+from sklearn.metrics.pairwise import cosine_similarity
 
-from src.common import DATA_DIR
+# Place your new imports DOWN HERE, after the future annotations and standard library imports
+from src.common import DATA_DIR, POS_GROUP
+from src.database import engine
 
 # Per-position feature emphasis. Any per90 column not listed gets WEIGHT_DEFAULT.
 # Keys are matched by substring against the column name so both 'xg_per90' and any
@@ -56,9 +59,8 @@ def _weight_vector(pos: str, feature_cols: list[str]) -> np.ndarray:
 
 
 class PlayerSimilarityEngine:
-    def __init__(self, data_path: str | Path = None):
-        self.data_path = Path(data_path) if data_path else DATA_DIR / "master_scouting_db.csv"
-        self.df = pd.read_csv(self.data_path)
+    def __init__(self, data_path=None):
+        self.df = pd.read_sql_table("players_master", con=engine)
         self.df.columns = [c.lower() for c in self.df.columns]
         self.df = self.df.dropna(subset=["player"]).drop_duplicates(subset=["player"]).reset_index(drop=True)
 

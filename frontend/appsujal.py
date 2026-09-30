@@ -9,10 +9,14 @@ import streamlit as st
 from datetime import datetime
 from google import genai
 
+# 1. CRITICAL: Add the parent directory to Python's path FIRST
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+# 2. Now Python can safely find and import from the src folder
 from src.similarity_engine import PlayerSimilarityEngine
 from src.system_fit import SystemFitEngine
 from src.common import DATA_DIR, canon_club, name_key, read_json
+from src.database import engine as db_engine
 
 st.set_page_config(
     page_title="StatTrick | Scouting Intelligence",
@@ -866,15 +870,18 @@ def apply_custom_theme(fig):
     return fig
 
 # --- 4. DATA LOADER & CACHING ---
-@st.cache_data
+# --- 4. DATA LOADER & CACHING ---
+@st.cache_data(show_spinner=False)
 def load_data():
-    db_path = DATA_DIR / "master_scouting_db.csv"
-    if not db_path.exists():
-        st.error(f"Database not found at {db_path}. Run src/valuation_model.py first.")
+    try:
+        df = pd.read_sql_table("players_master", con=db_engine)
+    except ValueError:
+        st.error("Database not found in Postgres. Run src/valuation_model.py first.")
         st.stop()
-    df = pd.read_csv(db_path)
+        
     df.columns = [c.lower() for c in df.columns]
     df = df.loc[:, ~df.columns.duplicated()].copy()
+    
     if "pos_clean" not in df.columns:
         pos_cols = [c for c in df.columns if c.startswith("pos_clean_")]
         if pos_cols: df["pos_clean"] = df[pos_cols].idxmax(axis=1).str.replace("pos_clean_", "")
@@ -886,9 +893,6 @@ def load_data():
         else: df["league"] = "Unknown"
 
     df["pos_clean"] = df["pos_clean"].astype(str).str.upper()
-    # squad/league already come out of the pipeline canonicalised (src/common.py); just
-    # guard against any stray variant instead of str.title()-mangling names like "Nott'ham
-    # Forest" -> "Nott'Ham Forest" the way the original code did.
     df["squad"] = df["squad"].astype(str).map(canon_club)
     df["league"] = df["league"].astype(str).str.strip()
     if "player" not in df.columns and "fb_name" in df.columns:
@@ -897,7 +901,7 @@ def load_data():
 
 @st.cache_resource
 def load_engine():
-    return PlayerSimilarityEngine(data_path=DATA_DIR / "master_scouting_db.csv")
+    return PlayerSimilarityEngine()
 
 @st.cache_resource
 def load_system_engine():
@@ -906,16 +910,16 @@ def load_system_engine():
         engine.club_profiles["squad"] = engine.club_profiles["squad"].map(canon_club)
     return engine
 
-@st.cache_data
+@st.cache_data(show_spinner=False)
 def load_timeline_data():
-    timeline_path = DATA_DIR / "player_timeline_db.csv"
-    if not timeline_path.exists():
+    try:
+        df_time = pd.read_sql_table("player_timeline", con=db_engine)
+        df_time.columns = [c.lower() for c in df_time.columns]
+        if "squad" in df_time.columns:
+            df_time["squad"] = df_time["squad"].astype(str).map(canon_club)
+        return df_time
+    except ValueError:
         return pd.DataFrame()
-    df_time = pd.read_csv(timeline_path)
-    df_time.columns = [c.lower() for c in df_time.columns]
-    if "squad" in df_time.columns:
-        df_time["squad"] = df_time["squad"].astype(str).map(canon_club)
-    return df_time
 
 # --- 5. APP EXECUTION ---
 system_engine = load_system_engine()

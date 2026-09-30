@@ -1,6 +1,6 @@
-"""Club tactical-fit engine (patched).
+"""Club tactical-fit engine (patched for PostgreSQL).
 
-Fixes vs. the original (#10 in the audit):
+Fixes vs. the original:
   - Club "style" used to be the minutes-weighted average of EVERY player at the club,
     so a CB's fit score was dragged around by the club's wingers and vice versa. Profiles
     are now built PER POSITION GROUP (GK / DEF / MID / ATT) and a player is compared to his
@@ -26,6 +26,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.preprocessing import StandardScaler
 
 from src.common import DATA_DIR, POS_GROUP
+from src.database import engine
 
 STYLE_FEATURES = [
     "prgp_per90", "prgc_per90", "xg_per90", "xag_per90",
@@ -80,7 +81,8 @@ class SystemFitEngine:
         self.club_styles_path = Path(club_styles_path) if club_styles_path else DATA_DIR / "club_tactical_profiles.parquet"
         self.scaler = StandardScaler()
 
-        self.df_players = pd.read_csv(self.db_path)
+        # 1. Read directly from Postgres
+        self.df_players = pd.read_sql_table("players_master", con=engine)
         self.df_players.columns = [c.lower() for c in self.df_players.columns]
         self.df_players = (self.df_players.dropna(subset=["player"])
                             .drop_duplicates(subset=["player"]).reset_index(drop=True))
@@ -94,8 +96,12 @@ class SystemFitEngine:
             self.feature_stats[feat] = (float(mean) if pd.notna(mean) else 0.0,
                                         float(std) if pd.notna(std) and std > 1e-5 else 1.0)
 
-        if self.club_styles_path.exists() and not force_rebuild:
-            self.club_profiles = pd.read_parquet(self.club_styles_path)
+        # 2. Check Postgres for club profiles, rebuild if missing or forced
+        if not force_rebuild:
+            try:
+                self.club_profiles = pd.read_sql_table("club_profiles", con=engine)
+            except ValueError:  # Table doesn't exist yet
+                self.club_profiles = self.build_and_save_profiles()
         else:
             self.club_profiles = self.build_and_save_profiles()
 
@@ -146,8 +152,9 @@ class SystemFitEngine:
             out_parts.append(g)
 
         club_agg = pd.concat(out_parts, ignore_index=True)
-        self.club_styles_path.parent.mkdir(parents=True, exist_ok=True)
-        club_agg.to_parquet(self.club_styles_path)
+        
+        print("Uploading club_profiles to Neon Postgres...")
+        club_agg.to_sql("club_profiles", con=engine, if_exists="replace", index=False)
         return club_agg
 
     # ------------------------------------------------------------------
