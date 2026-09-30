@@ -9,3 +9,5 @@ xgboost
 scikit-learn
 google-genai
 rapidfuzz
+SQLAlchemy>=2.0.0
+psycopg[binary]>=3.0.0
