@@ -6,7 +6,8 @@ import os
 import logging
 import tomllib
 from pathlib import Path
-from sqlalchemy import create_engine, MetaData, Table, Column, Integer, String, Float, Boolean, UniqueConstraint
+import pandas as pd
+from sqlalchemy import create_engine, MetaData, Table, Column, Integer, String, Float, Boolean, UniqueConstraint, text
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +89,44 @@ club_profiles = Table(
     UniqueConstraint("squad", "pos_group", name="uix_squad_pos_group")
 )
 
+# --- Environments -------------------------------------------------------------------------
+# STATTRICK_SCHEMA unset  -> the default schema (production: what the deployed app reads)
+# STATTRICK_SCHEMA=test   -> a separate Postgres schema, so a local experiment can run the whole
+#                            pipeline and the app without touching production tables.
+SCHEMA = os.getenv("STATTRICK_SCHEMA") or None
+_STAGING_SUFFIX = "__new"
+
+
+def _qualified(name: str) -> str:
+    return f'"{SCHEMA}"."{name}"' if SCHEMA else f'"{name}"'
+
+
+def read_table(name: str) -> pd.DataFrame:
+    """Read one pipeline table from the active schema (raises ValueError if it does not exist)."""
+    return pd.read_sql_table(name, con=engine, schema=SCHEMA)
+
+
+def replace_tables(tables: dict) -> None:
+    """Replace several tables ATOMICALLY.
+
+    Each frame is first written in full to '<name>__new'. Only when every write has succeeded
+    are the live tables dropped and the new ones renamed into place, inside ONE transaction.
+    A reader therefore sees either the complete old set or the complete new set - never a
+    half-written table, and never a new players_master beside an old player_timeline.
+    (to_sql(if_exists="replace") dropped the live table first and refilled it row by row.)"""
+    if SCHEMA and engine.dialect.name == "postgresql":
+        with engine.begin() as conn:
+            conn.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{SCHEMA}"'))
+    for name, df in tables.items():
+        df.to_sql(name + _STAGING_SUFFIX, con=engine, schema=SCHEMA, if_exists="replace", index=False)
+    with engine.begin() as conn:
+        for name in tables:
+            conn.execute(text(f"DROP TABLE IF EXISTS {_qualified(name)}"))
+            conn.execute(text(f'ALTER TABLE {_qualified(name + _STAGING_SUFFIX)} RENAME TO "{name}"'))
+    where = f"schema '{SCHEMA}'" if SCHEMA else "the default schema (production)"
+    print(f"Swapped in {', '.join(tables)} -> {where}")
+
+
 def init_db():
     """Creates all tables in the database if they do not exist."""
     logger.info("Initializing database schema...")
@@ -95,4 +134,4 @@ def init_db():
     logger.info("Schema enforced successfully.")
 
 if __name__ == "__main__":
-    init_db()
+    init_db()

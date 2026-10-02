@@ -9,7 +9,7 @@ jobs:
   retrain-and-deploy:
     runs-on: ubuntu-latest
     permissions:
-      contents: write 
+      contents: write
 
     steps:
     - name: Checkout Repository
@@ -18,7 +18,7 @@ jobs:
     - name: Set up Python Environment
       uses: actions/setup-python@v5
       with:
-        python-version: '3.11' 
+        python-version: '3.11'
         cache: 'pip'
 
     - name: Install Dependencies
@@ -30,17 +30,26 @@ jobs:
       run: sudo apt-get install -y xvfb dbus-x11
 
     - name: Stage 0A - Ingest Live Tactical Data (FBref)
-      # xvfb-run creates a virtual screen for SeleniumBase to use headed mode
       run: xvfb-run python src/ingest_fbref.py
-      
-    - name: Stage 0B - Ingest Live Financials (Transfermarkt)
-      run: xvfb-run python src/ingest_valuations.py
 
-    - name: Stage 1 - Run XGBoost Valuation Pipeline
+    - name: Stage 0B - Ingest Financials and Valuation History (Transfermarkt)
+      run: python src/ingest_valuations.py
+      env:
+        ALLOW_STALE_TM: "1"
+
+    - name: Stage 0C - Ingest xG and xA (Understat)
+      run: python src/ingest_understat.py
+      continue-on-error: true
+
+    - name: Stage 1 - Run Valuation Pipeline
       run: python src/valuation_model.py
+      env:
+        DATABASE_URL: ${{ secrets.DATABASE_URL }}
 
-    - name: Stage 2 - Update K-Means Tactical Clusters
+    - name: Stage 2 - Update Tactical Clusters
       run: python src/system_fit.py
+      env:
+        DATABASE_URL: ${{ secrets.DATABASE_URL }}
 
     - name: Commit and Push Updated Artifacts
       run: |

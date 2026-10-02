@@ -31,7 +31,7 @@ import pandas as pd
 from bs4 import BeautifulSoup, Comment
 from seleniumbase import SB
 
-from src.common import DATA_DIR, write_json
+from src.common import DATA_DIR, infer_live_season_start, write_json
 
 MIN_PLAYERS = 300           # a real Big-5 scrape has ~2,000+; below this something broke
 MIN_COVERAGE = 0.85         # required non-null share for a merged column to be "trusted"
@@ -156,6 +156,13 @@ def scrape_fbref_stealth() -> Path:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     out_path = DATA_DIR / "live_fbref_data.csv"
     df.to_csv(out_path, index=False)
+
+    # Season-stamped copy, overwritten each week. When the season rolls over, last season's final
+    # table stays on disk under its own name instead of being replaced by the new season's.
+    start = infer_live_season_start(df["Min"].max())
+    snapshot = DATA_DIR / f"fbref_live_{start % 100:02d}{(start + 1) % 100:02d}.csv"
+    df.to_csv(snapshot, index=False)
+    print(f"  season snapshot -> {snapshot.name}")
 
     write_json(DATA_DIR / "live_health.json", {
         "players": int(len(df)),

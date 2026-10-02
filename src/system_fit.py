@@ -26,7 +26,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.preprocessing import StandardScaler
 
 from src.common import DATA_DIR, POS_GROUP
-from src.database import engine
+from src.database import read_table, replace_tables
 
 STYLE_FEATURES = [
     "prgp_per90", "prgc_per90", "xg_per90", "xag_per90",
@@ -82,7 +82,7 @@ class SystemFitEngine:
         self.scaler = StandardScaler()
 
         # 1. Read directly from Postgres
-        self.df_players = pd.read_sql_table("players_master", con=engine)
+        self.df_players = read_table("players_master")
         self.df_players.columns = [c.lower() for c in self.df_players.columns]
         self.df_players = (self.df_players.dropna(subset=["player"])
                             .drop_duplicates(subset=["player"]).reset_index(drop=True))
@@ -96,10 +96,22 @@ class SystemFitEngine:
             self.feature_stats[feat] = (float(mean) if pd.notna(mean) else 0.0,
                                         float(std) if pd.notna(std) and std > 1e-5 else 1.0)
 
+        # Per-position-group stats. Z-scoring a centre-back against the all-positions mean made
+        # every defender look alike (and every fit score a function of position, not style).
+        self.group_stats = {}
+        for grp, g in self.df_players.groupby("pos_group"):
+            st_ = {}
+            for feat in STYLE_FEATURES:
+                s = pd.to_numeric(g[feat], errors="coerce") if feat in g.columns else pd.Series(dtype=float)
+                mean, std = s.mean(), s.std()
+                st_[feat] = (float(mean) if pd.notna(mean) else 0.0,
+                             float(std) if pd.notna(std) and std > 1e-5 else 1.0)
+            self.group_stats[grp] = st_
+
         # 2. Check Postgres for club profiles, rebuild if missing or forced
         if not force_rebuild:
             try:
-                self.club_profiles = pd.read_sql_table("club_profiles", con=engine)
+                self.club_profiles = read_table("club_profiles")
             except ValueError:  # Table doesn't exist yet
                 self.club_profiles = self.build_and_save_profiles()
         else:
@@ -154,7 +166,7 @@ class SystemFitEngine:
         club_agg = pd.concat(out_parts, ignore_index=True)
         
         print("Uploading club_profiles to Neon Postgres...")
-        club_agg.to_sql("club_profiles", con=engine, if_exists="replace", index=False)
+        replace_tables({"club_profiles": club_agg})
         return club_agg
 
     # ------------------------------------------------------------------
@@ -167,15 +179,18 @@ class SystemFitEngine:
 
         s = self.club_profiles[(self.club_profiles["squad"].str.lower() == target_squad.lower())
                                & (self.club_profiles["pos_group"] == group)]
-        if s.empty:                              # club has no profiled cohort in this group -> whole-squad fallback
-            s = self.club_profiles[self.club_profiles["squad"].str.lower() == target_squad.lower()]
         if s.empty:
-            return {"fit_score": 50.0, "archetype": "Unknown", "tier": "Unknown", "target_squad": target_squad}
+            # No profiled cohort in this position group. The old fallback took the club's FIRST
+            # row of any group, so attackers were scored against a defence profile (always 50.0).
+            return {"fit_score": None, "archetype": "No profile",
+                    "tier": f"Too few {group} players at this club to profile",
+                    "target_squad": target_squad, "position_group": group}
         srow = s.iloc[0]
+        stats = self.group_stats.get(group, self.feature_stats)
 
         p_vec, s_vec = [], []
         for feat in STYLE_FEATURES:
-            mean, std = self.feature_stats.get(feat, (0.0, 1.0))
+            mean, std = stats.get(feat, (0.0, 1.0))
             pv = prow.get(feat, np.nan)
             sv = srow.get(feat, np.nan)
             p_vec.append(((float(pv) if pd.notna(pv) else mean) - mean) / std)
@@ -183,11 +198,12 @@ class SystemFitEngine:
 
         p_vec, s_vec = np.array(p_vec).reshape(1, -1), np.array(s_vec).reshape(1, -1)
         cos = float(cosine_similarity(p_vec, s_vec)[0][0])
-        fit_score = float(np.clip(np.round(((cos + 1) / 2) * 100, 1), 50.0, 99.0))
+        fit_score = float(np.clip(np.round(((cos + 1) / 2) * 100, 1), 1.0, 99.0))   # no artificial floor at 50
 
-        tier = ("Exceptional System Synergy" if fit_score >= 85 else
-                "High Tactical Portability" if fit_score >= 75 else
-                "Moderate / Role Adjustment Required" if fit_score >= 65 else
+        # 50 = no relationship to the club's profile for this position group (cosine 0)
+        tier = ("Exceptional System Synergy" if fit_score >= 80 else
+                "High Tactical Portability" if fit_score >= 65 else
+                "Moderate / Role Adjustment Required" if fit_score >= 45 else
                 "System Friction / Counter-Profile")
 
         return {

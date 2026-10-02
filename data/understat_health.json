@@ -1,0 +1,134 @@
+{
+  "2021": {
+    "players": 2848,
+    "methods": {
+      "EPL": "api",
+      "La_liga": "api",
+      "Serie_A": "api",
+      "Bundesliga": "api",
+      "Ligue_1": "api"
+    },
+    "saved": true,
+    "columns": [
+      "id",
+      "player_name",
+      "games",
+      "time",
+      "goals",
+      "xG",
+      "assists",
+      "xA",
+      "shots",
+      "key_passes",
+      "yellow_cards",
+      "red_cards",
+      "position",
+      "team_title",
+      "npg",
+      "npxG",
+      "xGChain",
+      "xGBuildup",
+      "league",
+      "season"
+    ]
+  },
+  "2022": {
+    "players": 2806,
+    "methods": {
+      "EPL": "api",
+      "La_liga": "api",
+      "Serie_A": "api",
+      "Bundesliga": "api",
+      "Ligue_1": "api"
+    },
+    "saved": true,
+    "columns": [
+      "id",
+      "player_name",
+      "games",
+      "time",
+      "goals",
+      "xG",
+      "assists",
+      "xA",
+      "shots",
+      "key_passes",
+      "yellow_cards",
+      "red_cards",
+      "position",
+      "team_title",
+      "npg",
+      "npxG",
+      "xGChain",
+      "xGBuildup",
+      "league",
+      "season"
+    ]
+  },
+  "2023": {
+    "players": 2777,
+    "methods": {
+      "EPL": "api",
+      "La_liga": "api",
+      "Serie_A": "api",
+      "Bundesliga": "api",
+      "Ligue_1": "api"
+    },
+    "saved": true,
+    "columns": [
+      "id",
+      "player_name",
+      "games",
+      "time",
+      "goals",
+      "xG",
+      "assists",
+      "xA",
+      "shots",
+      "key_passes",
+      "yellow_cards",
+      "red_cards",
+      "position",
+      "team_title",
+      "npg",
+      "npxG",
+      "xGChain",
+      "xGBuildup",
+      "league",
+      "season"
+    ]
+  },
+  "2024": {
+    "players": 2774,
+    "methods": {
+      "EPL": "api",
+      "La_liga": "api",
+      "Serie_A": "api",
+      "Bundesliga": "api",
+      "Ligue_1": "api"
+    },
+    "saved": true,
+    "columns": [
+      "id",
+      "player_name",
+      "games",
+      "time",
+      "goals",
+      "xG",
+      "assists",
+      "xA",
+      "shots",
+      "key_passes",
+      "yellow_cards",
+      "red_cards",
+      "position",
+      "team_title",
+      "npg",
+      "npxG",
+      "xGChain",
+      "xGBuildup",
+      "league",
+      "season"
+    ]
+  }
+}

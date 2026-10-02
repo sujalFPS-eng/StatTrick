@@ -32,6 +32,27 @@ def current_season_start() -> int:
     return t.year if t.month >= 7 else t.year - 1
 
 
+def infer_live_season_start(max_minutes) -> int:
+    """Which season does FBref's un-dated 'current' table belong to?
+
+    The calendar says a new season starts on 1 July, but FBref keeps showing the finished season
+    until the new one kicks off. In July/August, a table where someone already has more than ten
+    matches of minutes is therefore still LAST season - labelling it as the new one would file a
+    whole finished season under the wrong year."""
+    cur = current_season_start()
+    try:
+        played = float(max_minutes)
+    except (TypeError, ValueError):
+        return cur
+    if today().month in (7, 8) and played > 900:
+        return cur - 1
+    return cur
+
+
+def season_label(start: int) -> str:
+    return f"{start}-{start + 1}"
+
+
 def canon_season(value) -> str | None:
     """'2023-24' / '2023-2024' / 2023 -> '2023-2024'."""
     m = re.match(r"\s*(\d{4})", str(value))
@@ -87,6 +108,14 @@ _CLUB_ALIASES = {
     "west ham united": "West Ham", "tottenham hotspur": "Tottenham", "spurs": "Tottenham",
     "nottingham": "Nott'ham Forest", "nottingham forest": "Nott'ham Forest", "nottham forest": "Nott'ham Forest",
     "eintracht frankfurt": "Eint Frankfurt", "frankfurt": "Eint Frankfurt",
+    "stade rennais fc": "Rennes", "stade rennais": "Rennes",
+    # Understat spellings
+    "alaves": "Alavés", "borussia m gladbach": "Gladbach", "fc cologne": "Köln",
+    "fc heidenheim": "Heidenheim", "parma calcio 1913": "Parma", "rasenballsport leipzig": "RB Leipzig",
+    "real oviedo": "Oviedo", "verona": "Hellas Verona", "vfb stuttgart": "Stuttgart",
+    "coventry": "Coventry City", "deportivo la coruna": "Dep. A Coruña", "hull": "Hull City",
+    "ipswich": "Ipswich Town", "malaga": "Málaga", "paderborn": "Paderborn 07",
+    "racing santander": "Racing Sant",
     "real betis": "Betis", "sheffield united": "Sheffield Utd",
     "st pauli": "St Pauli", "fc st pauli": "St Pauli",
     "brighton and hove albion": "Brighton", "brighton hove albion": "Brighton",

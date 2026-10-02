@@ -27,7 +27,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 
 # Place your new imports DOWN HERE, after the future annotations and standard library imports
 from src.common import DATA_DIR, POS_GROUP
-from src.database import engine
+from src.database import read_table
 
 # Per-position feature emphasis. Any per90 column not listed gets WEIGHT_DEFAULT.
 # Keys are matched by substring against the column name so both 'xg_per90' and any
@@ -60,7 +60,7 @@ def _weight_vector(pos: str, feature_cols: list[str]) -> np.ndarray:
 
 class PlayerSimilarityEngine:
     def __init__(self, data_path=None):
-        self.df = pd.read_sql_table("players_master", con=engine)
+        self.df = read_table("players_master")
         self.df.columns = [c.lower() for c in self.df.columns]
         self.df = self.df.dropna(subset=["player"]).drop_duplicates(subset=["player"]).reset_index(drop=True)
 
@@ -105,6 +105,27 @@ class PlayerSimilarityEngine:
         obs_i = self.observed[i].astype(float)
         confidence = (self.observed.astype(float) * obs_i * w).sum(axis=1) / max(w.sum(), 1e-6)
         return score, confidence
+
+    def explain(self, target_player: str, other_player: str, n: int = 3) -> dict | None:
+        """Why are these two similar, and where do they differ? Uses only stats that were actually
+        recorded for BOTH players, weighted the same way as the similarity score for the target's
+        position. Returns {'alike': [...], 'differ': [...]} of (column, target value, other value)."""
+        i, j = self._row(target_player), self._row(other_player)
+        if i is None or j is None:
+            return None
+        pos = self.df.at[i, "pos_clean"] if "pos_clean" in self.df.columns else ""
+        w = _weight_vector(pos, self.feature_cols)
+        both = self.observed[i] & self.observed[j]
+        gap = np.abs(self.Z[i] - self.Z[j])
+        rows = [(k, gap[k], w[k]) for k in range(len(self.feature_cols)) if both[k]]
+        if not rows:
+            return {"alike": [], "differ": []}
+        val = lambda k: (self.feature_cols[k], float(self.raw.iat[i, k]), float(self.raw.iat[j, k]))   # noqa: E731
+        # alike: closest among the stats that matter most for this position
+        key = [r for r in rows if r[2] >= 1.0] or rows
+        alike = [val(k) for k, _, _ in sorted(key, key=lambda r: r[1])[:n]]
+        differ = [val(k) for k, g, _ in sorted(rows, key=lambda r: -r[1] * r[2])[:n] if g >= 0.5]
+        return {"alike": alike, "differ": differ}
 
     # -- public API ------------------------------------------------------------------
     def find_similar_players(self, target_player: str, top_n: int = 5, same_position: bool = False):
