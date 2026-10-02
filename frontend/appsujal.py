@@ -93,6 +93,13 @@ METRIC_LABELS = {
 def label(col: str) -> str:
     return METRIC_LABELS.get(col, col.replace("_", " ").title())
 
+def fmt_big(value: float) -> str:
+    """Totals: switch to billions above EUR 1,000M so the figure fits a card."""
+    if pd.isna(value):
+        return "—"
+    return f"€{value / 1000:.2f}bn" if abs(value) >= 1000 else fmt_eur_m(value)
+
+
 def fmt_eur_m(value: float) -> str:
     if pd.isna(value):
         return "—"
@@ -1106,9 +1113,9 @@ def _shortlist_remove(names):
     st.session_state["shortlist"] = [n_ for n_ in st.session_state["shortlist"] if n_ not in set(names)]
 
 
-tab1, tab2, tab3, tab4, tab_short, tab5 = st.tabs(
-    ["Tactical Cloning", "Arbitrage Screener", "Head-to-Head Sandbox", "Gap Analysis",
-     "Shortlist", "Methodology"])      # label must stay constant: a changing label resets the active tab
+tab1, tab_replace, tab2, tab3, tab4, tab_team, tab_short, tab5 = st.tabs(
+    ["Player", "Replace a Player", "Arbitrage Screener", "Head-to-Head Sandbox", "Gap Analysis",
+     "Team View", "Shortlist", "Methodology"])      # label must stay constant: a changing label resets the active tab
 st.sidebar.caption(f"**Shortlist:** {len(st.session_state['shortlist'])} player(s) saved this session")
 
 WHY_LABELS = {
@@ -1178,381 +1185,475 @@ with tab1:
     render_metrics_html(core_cards)
     st.write("")
 
-    actual_val = target_row.get("actual_value_m", 0.0)
-    pred_val = target_row.get("predicted_value_m", 0.0)
-    pred_low = target_row.get("pred_value_low_m", pred_val * 0.85)
-    pred_high = target_row.get("pred_value_high_m", pred_val * 1.15)
-    surplus_val = target_row.get("surplus_value_m", 0.0)
+    # The page is long, so it is split into three views of the same player.
+    sub_value, sub_style, sub_fit = st.tabs(["Value", "Style & clones", "Fit & form"])
+    with sub_value:
+        actual_val = target_row.get("actual_value_m", 0.0)
+        pred_val = target_row.get("predicted_value_m", 0.0)
+        pred_low = target_row.get("pred_value_low_m", pred_val * 0.85)
+        pred_high = target_row.get("pred_value_high_m", pred_val * 1.15)
+        surplus_val = target_row.get("surplus_value_m", 0.0)
 
-    sentiment = "positive" if surplus_val > 0 else "negative"
-    delta_str = f"{'+' if surplus_val > 0 else ''}€{surplus_val:.1f}M ({'Undervalued' if surplus_val > 0 else 'Market premium'})"
-    band_str = f"Fair band {fmt_eur_m(pred_low)} – {fmt_eur_m(pred_high)}"
+        sentiment = "positive" if surplus_val > 0 else "negative"
+        delta_str = f"{'+' if surplus_val > 0 else ''}€{surplus_val:.1f}M ({'Undervalued' if surplus_val > 0 else 'Market premium'})"
+        band_str = f"Fair band {fmt_eur_m(pred_low)} – {fmt_eur_m(pred_high)}"
 
-    financial_cards = [
-        ("Market value · Transfermarkt", fmt_eur_m(actual_val), "Public consensus price", "neutral"),
-        ("Performance value · model", fmt_eur_m(pred_val), band_str, "neutral"),
-    ]
-    premium = target_row.get("status_premium_m")
-    if premium is not None and pd.notna(premium):
-        financial_cards.append((
-            "Status & contract premium", f"{'+' if premium > 0 else ''}{fmt_eur_m(premium)}",
-            "What club level, caps and contract add" if premium >= 0 else "Club level, caps and contract pull it down",
-            "neutral"))
-    financial_cards.append(("Market vs performance", fmt_eur_m(surplus_val), delta_str, sentiment))
-    render_metrics_html(financial_cards)
+        financial_cards = [
+            ("Market value · Transfermarkt", fmt_eur_m(actual_val), "Public consensus price", "neutral"),
+            ("Performance value · model", fmt_eur_m(pred_val), band_str, "neutral"),
+        ]
+        premium = target_row.get("status_premium_m")
+        if premium is not None and pd.notna(premium):
+            financial_cards.append((
+                "Status & contract premium", f"{'+' if premium > 0 else ''}{fmt_eur_m(premium)}",
+                "What club level, caps and contract add" if premium >= 0 else "Club level, caps and contract pull it down",
+                "neutral"))
+        financial_cards.append(("Market vs performance", fmt_eur_m(surplus_val), delta_str, sentiment))
+        render_metrics_html(financial_cards)
 
-    # Market forecast: a separate model that openly uses Transfermarkt's own value history
-    fc_val = target_row.get("forecast_value_m") if "forecast_value_m" in target_row.index else None
-    if fc_val is not None and pd.notna(fc_val):
-        fc_chg = safe_float(target_row.get("forecast_change_pct"))
-        fc_sent = "positive" if fc_chg > 2 else ("negative" if fc_chg < -2 else "neutral")
-        st.write("")
-        render_metrics_html([
-            ("Market forecast · 12 months", fmt_eur_m(fc_val),
-             f"{fc_chg:+.0f}% from {fmt_eur_m(target_row.get('forecast_base_value_m'))} "
-             f"(valued {target_row.get('forecast_base_date')})", fc_sent),
-            ("Likely range", f"{fmt_eur_m(target_row.get('forecast_low_m'))} – {fmt_eur_m(target_row.get('forecast_high_m'))}",
-             "70% of back-test misses fell inside this", "neutral"),
-            ("What this is", "Price outlook",
-             "Predicts Transfermarkt's next valuation from its history, age, club and output", "neutral"),
-        ])
+        # Market forecast: a separate model that openly uses Transfermarkt's own value history
+        fc_val = target_row.get("forecast_value_m") if "forecast_value_m" in target_row.index else None
+        if fc_val is not None and pd.notna(fc_val):
+            fc_chg = safe_float(target_row.get("forecast_change_pct"))
+            fc_sent = "positive" if fc_chg > 2 else ("negative" if fc_chg < -2 else "neutral")
+            st.write("")
+            render_metrics_html([
+                ("Market forecast · 12 months", fmt_eur_m(fc_val),
+                 f"{fc_chg:+.0f}% from {fmt_eur_m(target_row.get('forecast_base_value_m'))} "
+                 f"(valued {target_row.get('forecast_base_date')})", fc_sent),
+                ("Likely range", f"{fmt_eur_m(target_row.get('forecast_low_m'))} – {fmt_eur_m(target_row.get('forecast_high_m'))}",
+                 "70% of back-test misses fell inside this", "neutral"),
+                ("What this is", "Price outlook",
+                 "Predicts Transfermarkt's next valuation from its history, age, club and output", "neutral"),
+            ])
 
-    # Market value over time, with the 12-month forecast as a dashed continuation
-    vh = load_value_history()
-    vh = vh[vh["pkey"] == target_row.get("pkey")].sort_values("date") if len(vh) else vh
-    if len(vh) >= 2:
+        # Market value over time, with the 12-month forecast as a dashed continuation
+        vh = load_value_history()
+        vh = vh[vh["pkey"] == target_row.get("pkey")].sort_values("date") if len(vh) else vh
+        if len(vh) >= 2:
+            st.write("")
+            with st.container(border=True):
+                st.markdown('<div class="panel-title">Transfermarkt value over time · and where the forecast puts it next</div>',
+                            unsafe_allow_html=True)
+                fig_val = go.Figure()
+                fig_val.add_trace(go.Scatter(
+                    x=vh["date"], y=vh["value_m"], mode="lines+markers", name="Transfermarkt value",
+                    line=dict(color=CYAN, width=2.5), marker=dict(size=6, color=INK, line=dict(color=CYAN, width=2)),
+                    hovertemplate="%{x|%b %Y}<br>€%{y:.1f}M<extra></extra>"))
+                if fc_val is not None and pd.notna(fc_val):
+                    base_date = pd.to_datetime(target_row.get("forecast_base_date"), errors="coerce")
+                    if pd.notna(base_date):
+                        fc_date = base_date + pd.DateOffset(years=1)
+                        lo_, hi_ = safe_float(target_row.get("forecast_low_m"), fc_val), safe_float(target_row.get("forecast_high_m"), fc_val)
+                        fig_val.add_trace(go.Scatter(
+                            x=[base_date, fc_date], y=[safe_float(target_row.get("forecast_base_value_m")), fc_val],
+                            mode="lines", line=dict(color=MINT, width=2, dash="dash"), hoverinfo="skip", showlegend=False))
+                        fig_val.add_trace(go.Scatter(
+                            x=[fc_date], y=[fc_val], mode="markers", name="Forecast (12 months)",
+                            marker=dict(size=11, color=MINT, symbol="diamond", line=dict(color=INK, width=2)),
+                            error_y=dict(type="data", symmetric=False, array=[max(hi_ - fc_val, 0)],
+                                         arrayminus=[max(fc_val - lo_, 0)], color=MINT, thickness=1.5, width=6),
+                            hovertemplate="Forecast %{x|%b %Y}<br>€%{y:.1f}M"
+                                          f"<br>likely range €{lo_:.1f}M – €{hi_:.1f}M<extra></extra>"))
+                perf_ = safe_float(pred_val, np.nan)
+                if pd.notna(perf_):
+                    fig_val.add_hline(y=perf_, line=dict(color=AMBER, width=1.2, dash="dot"),
+                                      annotation_text=f"Performance value €{perf_:.1f}M",
+                                      annotation_position="bottom left", annotation_font=dict(color=AMBER, size=11))
+                fig_val.update_layout(height=280, margin=dict(t=20, b=30, l=45, r=20),
+                                      legend=dict(orientation="h", y=1.12, x=0), yaxis_title="€M",
+                                      yaxis=dict(rangemode="tozero"))
+                st.plotly_chart(apply_custom_theme(fig_val), use_container_width=True, config={"displayModeBar": False})
+                st.caption("Solid line: Transfermarkt's published valuations. Dashed line and diamond: the forecast, with "
+                           "the range that held 70% of back-test misses. Dotted line: what his output alone is worth today.")
+
         st.write("")
         with st.container(border=True):
-            st.markdown('<div class="panel-title">Transfermarkt value over time · and where the forecast puts it next</div>',
-                        unsafe_allow_html=True)
-            fig_val = go.Figure()
-            fig_val.add_trace(go.Scatter(
-                x=vh["date"], y=vh["value_m"], mode="lines+markers", name="Transfermarkt value",
-                line=dict(color=CYAN, width=2.5), marker=dict(size=6, color=INK, line=dict(color=CYAN, width=2)),
-                hovertemplate="%{x|%b %Y}<br>€%{y:.1f}M<extra></extra>"))
-            if fc_val is not None and pd.notna(fc_val):
-                base_date = pd.to_datetime(target_row.get("forecast_base_date"), errors="coerce")
-                if pd.notna(base_date):
-                    fc_date = base_date + pd.DateOffset(years=1)
-                    lo_, hi_ = safe_float(target_row.get("forecast_low_m"), fc_val), safe_float(target_row.get("forecast_high_m"), fc_val)
-                    fig_val.add_trace(go.Scatter(
-                        x=[base_date, fc_date], y=[safe_float(target_row.get("forecast_base_value_m")), fc_val],
-                        mode="lines", line=dict(color=MINT, width=2, dash="dash"), hoverinfo="skip", showlegend=False))
-                    fig_val.add_trace(go.Scatter(
-                        x=[fc_date], y=[fc_val], mode="markers", name="Forecast (12 months)",
-                        marker=dict(size=11, color=MINT, symbol="diamond", line=dict(color=INK, width=2)),
-                        error_y=dict(type="data", symmetric=False, array=[max(hi_ - fc_val, 0)],
-                                     arrayminus=[max(fc_val - lo_, 0)], color=MINT, thickness=1.5, width=6),
-                        hovertemplate="Forecast %{x|%b %Y}<br>€%{y:.1f}M"
-                                      f"<br>likely range €{lo_:.1f}M – €{hi_:.1f}M<extra></extra>"))
-            perf_ = safe_float(pred_val, np.nan)
-            if pd.notna(perf_):
-                fig_val.add_hline(y=perf_, line=dict(color=AMBER, width=1.2, dash="dot"),
-                                  annotation_text=f"Performance value €{perf_:.1f}M",
-                                  annotation_position="bottom left", annotation_font=dict(color=AMBER, size=11))
-            fig_val.update_layout(height=280, margin=dict(t=20, b=30, l=45, r=20),
-                                  legend=dict(orientation="h", y=1.12, x=0), yaxis_title="€M",
-                                  yaxis=dict(rangemode="tozero"))
-            st.plotly_chart(apply_custom_theme(fig_val), use_container_width=True, config={"displayModeBar": False})
-            st.caption("Solid line: Transfermarkt's published valuations. Dashed line and diamond: the forecast, with "
-                       "the range that held 70% of back-test misses. Dotted line: what his output alone is worth today.")
+            render_valuation_bar(actual_val, pred_val, pred_low, pred_high)
 
-    st.write("")
-    with st.container(border=True):
-        render_valuation_bar(actual_val, pred_val, pred_low, pred_high)
-
-    st.caption(
-        "Performance value is what his on-pitch output, minutes, age, position and league are usually "
-        "worth (median estimate), with a fair band the market price falls inside about 70% of the time. "
-        "It ignores his club, international status and contract; those are shown separately as the premium."
-    )
-    notes = []
-    if safe_float(target_row.get("tm_club_mismatch")) == 1:
-        notes.append(f"**Market value pre-dates his move.** Transfermarkt still lists him at "
-                     f"{target_row.get('tm_club', 'his previous club')}; the value shown and the missing "
-                     "contract length describe that spell, not his current one.")
-    if str(target_row.get("match_method", "exact")) != "exact":
-        notes.append(f"**Name matched approximately** to Transfermarkt's “{target_row.get('tm_match_name', '?')}” "
-                     f"({target_row.get('match_method')}). Check it is the same person.")
-    n_comp = target_row.get("n_comparables")
-    if (pd.notna(n_comp) and n_comp < 10 and safe_float(target_row.get("outside_band")) == -1
-            and safe_float(actual_val) >= 20):
-        notes.append(f"**Few comparable players.** Only {int(n_comp)} others near his age carry a market value "
-                     "anywhere close to his, so the model has little to learn from. Treat the performance value as "
-                     "what age and output alone justify, not as a price.")
-    if notes:
-        st.warning("\n\n".join(notes))
-
-    # Data coverage is routine information, not a warning
-    last_season = target_row.get("last_season")
-    adv_last = target_row.get("adv_last_season")
-    xg_last = target_row.get("xg_last_season") if "xg_last_season" in target_row.index else adv_last
-    has = lambda v: v is not None and not pd.isna(v) and bool(v)
-    parts = [f"Goals, assists, shots and minutes: through {last_season} (updated weekly)"]
-    parts.append(f"xG and xA: through {xg_last}" if has(xg_last) else "xG and xA: not available for him")
-    parts.append(f"progression and defensive actions: through {adv_last}, the last season published"
-                 if has(adv_last) else "progression and defensive actions: not published for his seasons")
-    coverage = "**Data coverage** · " + ". ".join(p if p.startswith("xG") else p[0].upper() + p[1:] for p in parts) + "."
-    st.caption(coverage)
-
-    if "why_age" in df_master.columns:
-        section_heading("Why this value", "What drives his performance value")
-        with st.container(border=True):
-            render_why(target_row)
-
-    section_heading("Statistical clones", "Closest tactical output to your target")
-    st.info("**What is a clone?** A player who shares a highly similar statistical profile and on-pitch playstyle to your target. Calculated via cosine similarity across multi-season tactical metrics.")
-
-    # over-fetch, then keep the closest matches that are still recruitable
-    results = engine.find_similar_players(target, top_n=top_k * 12 if active_only else top_k, same_position=filter_pos)
-    if isinstance(results, pd.DataFrame) and active_only:
-        results = results[results["Player"].isin(RECRUITABLE)].head(top_k).reset_index(drop=True)
-        if results.empty:
-            results = None
-
-    if isinstance(results, pd.DataFrame):
-        display_results = results.copy()
-        if "actual_value_m" in df_master.columns:
-            display_results = display_results.merge(
-                df_master[["player", "actual_value_m", "predicted_value_m", "surplus_value_m"]],
-                left_on="Player", right_on="player", how="left"
-            ).drop(columns=["player"])
-            for val_col in ["actual_value_m", "predicted_value_m", "surplus_value_m"]:
-                display_results[label(val_col)] = display_results[val_col].apply(fmt_eur_m)
-            display_results.drop(columns=["actual_value_m", "predicted_value_m", "surplus_value_m"], inplace=True)
-        
-        clone_col_config = {}
-        for c in display_results.columns:
-            if "similar" in str(c).lower() or "score" in str(c).lower() or "confidence" in str(c).lower():
-                # Values arrive as "95.5%" display strings, which ProgressColumn cannot draw a
-                # bar from directly. The original code tried pd.to_numeric() on the raw string,
-                # got NaN because of the trailing '%', and silently skipped the bar for every
-                # row - fixed by stripping '%' and converting the column itself to numeric.
-                numeric = pd.to_numeric(display_results[c].astype(str).str.rstrip("%"), errors="coerce")
-                if numeric.isna().all():
-                    continue
-                display_results[c] = numeric
-                col_max = float(numeric.max())
-                scale = 1.0 if col_max <= 1.0 else 100.0
-                clone_col_config[c] = st.column_config.ProgressColumn(
-                    str(c), min_value=0.0, max_value=scale,
-                    format="%.3f" if scale == 1.0 else "%.1f%%",
-                )
-        st.dataframe(display_results, hide_index=True, use_container_width=True, column_config=clone_col_config)
-        st.download_button(
-            "Download clone list (CSV)",
-            display_results.to_csv(index=False).encode("utf-8"),
-            file_name=f"stattrick_clones_{str(target).replace(' ', '_')}.csv",
-            mime="text/csv",
+        st.caption(
+            "Performance value is what his on-pitch output, minutes, age, position and league are usually "
+            "worth (median estimate), with a fair band the market price falls inside about 70% of the time. "
+            "It ignores his club, international status and contract; those are shown separately as the premium."
         )
-        top_clone = display_results.iloc[0]["Player"]
+        notes = []
+        if safe_float(target_row.get("tm_club_mismatch")) == 1:
+            notes.append(f"**Market value pre-dates his move.** Transfermarkt still lists him at "
+                         f"{target_row.get('tm_club', 'his previous club')}; the value shown and the missing "
+                         "contract length describe that spell, not his current one.")
+        if str(target_row.get("match_method", "exact")) != "exact":
+            notes.append(f"**Name matched approximately** to Transfermarkt's “{target_row.get('tm_match_name', '?')}” "
+                         f"({target_row.get('match_method')}). Check it is the same person.")
+        n_comp = target_row.get("n_comparables")
+        if (pd.notna(n_comp) and n_comp < 10 and safe_float(target_row.get("outside_band")) == -1
+                and safe_float(actual_val) >= 20):
+            notes.append(f"**Few comparable players.** Only {int(n_comp)} others near his age carry a market value "
+                         "anywhere close to his, so the model has little to learn from. Treat the performance value as "
+                         "what age and output alone justify, not as a price.")
+        if notes:
+            st.warning("\n\n".join(notes))
 
-        if hasattr(engine, "explain"):
-            with st.expander("Why are they similar? Compare the target with one clone"):
-                pick = st.selectbox("Clone", display_results["Player"].tolist(), key="explain_clone")
-                why = engine.explain(target, pick)
-                if why and (why["alike"] or why["differ"]):
-                    ex_l, ex_r = st.columns(2)
-                    line = lambda c, a, b: f"- **{label(c)}**: {a:.2f} vs {b:.2f}"      # noqa: E731
-                    ex_l.markdown("**Most alike**\n\n" + ("\n".join(line(*r) for r in why["alike"]) or "—"))
-                    ex_r.markdown("**Biggest differences**\n\n" + ("\n".join(line(*r) for r in why["differ"])
-                                                                      or "No stat differs by much."))
-                    st.caption(f"Each line reads {target.split()[-1]} vs {pick.split()[-1]}, per 90 minutes. Only stats "
-                               "recorded for both players are compared, weighted for the target's position.")
-                else:
-                    st.caption("Too few stats recorded for both players to explain this pair.")
-    else:
-        top_clone = None
-        st.warning("Could not compute clones.")
+        # Data coverage is routine information, not a warning
+        last_season = target_row.get("last_season")
+        adv_last = target_row.get("adv_last_season")
+        xg_last = target_row.get("xg_last_season") if "xg_last_season" in target_row.index else adv_last
+        has = lambda v: v is not None and not pd.isna(v) and bool(v)
+        parts = [f"Goals, assists, shots and minutes: through {last_season} (updated weekly)"]
+        parts.append(f"xG and xA: through {xg_last}" if has(xg_last) else "xG and xA: not available for him")
+        parts.append(f"progression and defensive actions: through {adv_last}, the last season published"
+                     if has(adv_last) else "progression and defensive actions: not published for his seasons")
+        coverage = "**Data coverage** · " + ". ".join(p if p.startswith("xG") else p[0].upper() + p[1:] for p in parts) + "."
+        st.caption(coverage)
 
-    # --- CONTEXTUAL SYSTEM FIT & FORM VISUALIZER ---
-    section_heading("Tactical portability & form trajectory", "System compatibility and multi-season output")
+        if "why_age" in df_master.columns:
+            section_heading("Why this value", "What drives his performance value")
+            with st.container(border=True):
+                render_why(target_row)
 
-    with st.container(border=True):
-        col_fit, col_form = st.columns([1, 1.15])
+    with sub_style:
+        section_heading("Statistical clones", "Closest tactical output to your target")
+        st.info("**What is a clone?** A player who shares a highly similar statistical profile and on-pitch playstyle to your target. Calculated via cosine similarity across multi-season tactical metrics.")
 
-        with col_fit:
-            available_squads = sorted(system_engine.club_profiles["squad"].unique().tolist())
-            default_club_idx = available_squads.index("Arsenal") if "Arsenal" in available_squads else 0
-            selected_squad = st.selectbox("Simulate transfer to acquiring club", available_squads, index=default_club_idx)
+        # over-fetch, then keep the closest matches that are still recruitable
+        results = engine.find_similar_players(target, top_n=top_k * 12 if active_only else top_k, same_position=filter_pos)
+        if isinstance(results, pd.DataFrame) and active_only:
+            results = results[results["Player"].isin(RECRUITABLE)].head(top_k).reset_index(drop=True)
+            if results.empty:
+                results = None
 
-            fit_data = system_engine.calculate_system_fit(target, selected_squad)
-            render_fit_gauge(
-                f"{selected_squad} tactical archetype",
-                fit_data["archetype"],
-                fit_data["tier"],
-                fit_data["fit_score"],
+        if isinstance(results, pd.DataFrame):
+            display_results = results.copy()
+            if "actual_value_m" in df_master.columns:
+                display_results = display_results.merge(
+                    df_master[["player", "actual_value_m", "predicted_value_m", "surplus_value_m"]],
+                    left_on="Player", right_on="player", how="left"
+                ).drop(columns=["player"])
+                for val_col in ["actual_value_m", "predicted_value_m", "surplus_value_m"]:
+                    display_results[label(val_col)] = display_results[val_col].apply(fmt_eur_m)
+                display_results.drop(columns=["actual_value_m", "predicted_value_m", "surplus_value_m"], inplace=True)
+        
+            clone_col_config = {}
+            for c in display_results.columns:
+                if "similar" in str(c).lower() or "score" in str(c).lower() or "confidence" in str(c).lower():
+                    # Values arrive as "95.5%" display strings, which ProgressColumn cannot draw a
+                    # bar from directly. The original code tried pd.to_numeric() on the raw string,
+                    # got NaN because of the trailing '%', and silently skipped the bar for every
+                    # row - fixed by stripping '%' and converting the column itself to numeric.
+                    numeric = pd.to_numeric(display_results[c].astype(str).str.rstrip("%"), errors="coerce")
+                    if numeric.isna().all():
+                        continue
+                    display_results[c] = numeric
+                    col_max = float(numeric.max())
+                    scale = 1.0 if col_max <= 1.0 else 100.0
+                    clone_col_config[c] = st.column_config.ProgressColumn(
+                        str(c), min_value=0.0, max_value=scale,
+                        format="%.3f" if scale == 1.0 else "%.1f%%",
+                    )
+            st.dataframe(display_results, hide_index=True, use_container_width=True, column_config=clone_col_config)
+            st.download_button(
+                "Download clone list (CSV)",
+                display_results.to_csv(index=False).encode("utf-8"),
+                file_name=f"stattrick_clones_{str(target).replace(' ', '_')}.csv",
+                mime="text/csv",
             )
+            top_clone = display_results.iloc[0]["Player"]
 
-            try:
-                api_key = st.secrets["GEMINI_API_KEY"]
-            except (KeyError, FileNotFoundError):
-                # st.secrets raises rather than behaving like a normal dict when no
-                # secrets.toml exists at all, so `"X" in st.secrets` used to crash the app
-                # on a machine with no secrets file configured (audit #11).
-                api_key = st.text_input("Enter free Gemini API Key to unlock AI Insights:", type="password")
+            if hasattr(engine, "explain"):
+                with st.expander("Why are they similar? Compare the target with one clone"):
+                    pick = st.selectbox("Clone", display_results["Player"].tolist(), key="explain_clone")
+                    why = engine.explain(target, pick)
+                    if why and (why["alike"] or why["differ"]):
+                        ex_l, ex_r = st.columns(2)
+                        line = lambda c, a, b: f"- **{label(c)}**: {a:.2f} vs {b:.2f}"      # noqa: E731
+                        ex_l.markdown("**Most alike**\n\n" + ("\n".join(line(*r) for r in why["alike"]) or "—"))
+                        ex_r.markdown("**Biggest differences**\n\n" + ("\n".join(line(*r) for r in why["differ"])
+                                                                          or "No stat differs by much."))
+                        st.caption(f"Each line reads {target.split()[-1]} vs {pick.split()[-1]}, per 90 minutes. Only stats "
+                                   "recorded for both players are compared, weighted for the target's position.")
+                    else:
+                        st.caption("Too few stats recorded for both players to explain this pair.")
+        else:
+            top_clone = None
+            st.warning("Could not compute clones.")
 
-            if api_key:
-                if st.button("Generate AI Tactical Brief", key="ai_insight"):
-                    with st.spinner("Analyzing vector synergy..."):
-                        p_dict = df_master[df_master["player"] == target].iloc[0].to_dict()
-                        club_rows = system_engine.club_profiles[
-                            system_engine.club_profiles["squad"].str.lower() == selected_squad.lower()
-                        ]
-                        # SAFE EXTRACT: Fallback to club average if 'pos_group' is missing from remote data
-                        if "pos_group" in club_rows.columns:
-                            group_rows = club_rows[club_rows["pos_group"] == fit_data.get("position_group")]
-                        else:
-                            group_rows = club_rows
+    with sub_fit:
+        # --- CONTEXTUAL SYSTEM FIT & FORM VISUALIZER ---
+        section_heading("Tactical portability & form trajectory", "System compatibility and multi-season output")
+
+        with st.container(border=True):
+            col_fit, col_form = st.columns([1, 1.15])
+
+            with col_fit:
+                available_squads = sorted(system_engine.club_profiles["squad"].unique().tolist())
+                default_club_idx = available_squads.index("Arsenal") if "Arsenal" in available_squads else 0
+                selected_squad = st.selectbox("Simulate transfer to acquiring club", available_squads, index=default_club_idx)
+
+                fit_data = system_engine.calculate_system_fit(target, selected_squad)
+                render_fit_gauge(
+                    f"{selected_squad} tactical archetype",
+                    fit_data["archetype"],
+                    fit_data["tier"],
+                    fit_data["fit_score"],
+                )
+
+                try:
+                    api_key = st.secrets["GEMINI_API_KEY"]
+                except (KeyError, FileNotFoundError):
+                    # st.secrets raises rather than behaving like a normal dict when no
+                    # secrets.toml exists at all, so `"X" in st.secrets` used to crash the app
+                    # on a machine with no secrets file configured (audit #11).
+                    api_key = st.text_input("Enter free Gemini API Key to unlock AI Insights:", type="password")
+
+                if api_key:
+                    if st.button("Generate AI Tactical Brief", key="ai_insight"):
+                        with st.spinner("Analyzing vector synergy..."):
+                            p_dict = df_master[df_master["player"] == target].iloc[0].to_dict()
+                            club_rows = system_engine.club_profiles[
+                                system_engine.club_profiles["squad"].str.lower() == selected_squad.lower()
+                            ]
+                            # SAFE EXTRACT: Fallback to club average if 'pos_group' is missing from remote data
+                            if "pos_group" in club_rows.columns:
+                                group_rows = club_rows[club_rows["pos_group"] == fit_data.get("position_group")]
+                            else:
+                                group_rows = club_rows
                             
-                        s_dict = (group_rows.iloc[0] if not group_rows.empty else club_rows.iloc[0]).to_dict()
+                            s_dict = (group_rows.iloc[0] if not group_rows.empty else club_rows.iloc[0]).to_dict()
 
-                        try:
-                            brief = generate_tactical_brief(
-                                p_dict, s_dict, fit_data,
-                                getattr(system_engine, "group_stats", {}).get(
-                                    fit_data.get("position_group"), system_engine.feature_stats),
-                                api_key)
-                        except Exception as exc:
-                            st.error(f"Scouting AI unavailable: {exc}")
-                            brief = None
+                            try:
+                                brief = generate_tactical_brief(
+                                    p_dict, s_dict, fit_data,
+                                    getattr(system_engine, "group_stats", {}).get(
+                                        fit_data.get("position_group"), system_engine.feature_stats),
+                                    api_key)
+                            except Exception as exc:
+                                st.error(f"Scouting AI unavailable: {exc}")
+                                brief = None
 
-                    if brief:
+                        if brief:
+                            st.markdown(
+                                f'<div style="padding: 1rem; border-left: 3px solid var(--mint); background: rgba(53,224,140,0.05); margin-top: 1rem; font-size: 0.88rem; border-radius: 8px;">'
+                                f'<b style="color: var(--mint);">🤖 AI Tactical Brief</b><br><br>{brief}'
+                                f'</div>', 
+                                unsafe_allow_html=True
+                            )
+
+            with col_form:
+                target_pos = str(target_row.get("pos_clean", "MF")).upper()
+                if not df_timeline.empty and "season" in df_timeline.columns:
+                    # Join on identity (accent-free name + birth year), not on the display name:
+                    # names collide (two 'Rodri's) and vary by source ('Fermin' / 'Fermín').
+                    target_pkey = target_row.get("pkey")
+                    if "pkey" in df_timeline.columns and pd.notna(target_pkey):
+                        player_history = df_timeline[df_timeline["pkey"] == target_pkey].copy()
+                    else:
+                        player_history = df_timeline[df_timeline["player"].str.lower() == str(target).lower()].copy()
+
+                    # 1. One row per season, stints combined by minutes
+                    seasons_played = sorted(player_history["season"].dropna().unique().tolist())
+                    player_history = season_rollup(player_history)
+
+                    # 2. Calculate the specific positional metric
+                    form_view = st.radio(
+                        "Trend", ["Role metric", "Goals + assists · every season"], horizontal=True,
+                        label_visibility="collapsed", key="form_view",
+                        help="Role metrics use event data (xG, progression, defensive actions), which the "
+                             "provider publishes up to 2024-25. Goals and assists are current to this week.")
+                    series_values, metric_title = get_position_form_metric(
+                        target_pos, player_history, actuals=form_view.startswith("Goals"))
+                    player_history["form_metric"] = series_values
+                
+                    # 3. Filter out ONLY the seasons where the form metric is completely missing
+                    player_history = player_history.dropna(subset=["form_metric"])
+
+                    # 4. Allow plotting even if there is only 1 valid historical season
+                    if not player_history.empty:
+                        st.markdown(f'<div class="panel-title" style="margin-bottom: 2px;">Form vs. Baseline · Multi-Season {metric_title}</div>', unsafe_allow_html=True)
+
+                        fig_timeline = go.Figure()
+                        fig_timeline.add_trace(go.Scatter(
+                            x=player_history["season"],
+                            y=player_history["form_metric"],
+                            customdata=player_history["squad"],
+                            mode="lines+markers",
+                            line=dict(color=MINT, width=2.5, shape="spline", smoothing=0.3),
+                            marker=dict(size=8, color=INK, line=dict(color=MINT, width=2)),
+                            fill="tozeroy",
+                            fillcolor="rgba(53, 224, 140, 0.12)",
+                            hovertemplate=f"<b>%{{x}}</b> · %{{customdata}}<br>{metric_title}: %{{y:.2f}}<extra></extra>"
+                        ))
+
+                        fig_timeline.update_layout(
+                            paper_bgcolor="rgba(0,0,0,0)",
+                            plot_bgcolor="rgba(0,0,0,0)",
+                            font=dict(family="Inter, sans-serif", color=TEXT, size=11),
+                            margin=dict(t=15, b=25, l=35, r=20),
+                            height=185,
+                            xaxis=dict(showgrid=False, linecolor=LINE, tickfont=dict(color=TEXT_DIM, size=10)),
+                            yaxis=dict(gridcolor=GRID, zerolinecolor=GRID, linecolor=LINE, tickfont=dict(color=TEXT_DIM, size=10))
+                        )
+                        st.plotly_chart(fig_timeline, use_container_width=True, config={'displayModeBar': False})
+                        untracked = [s for s in seasons_played if s not in set(player_history["season"])]
+                        if untracked:
+                            st.caption(f"This metric is published up to {player_history['season'].max()}. "
+                                       "Switch to “Goals + assists” above for his output through the current season.")
+                    else:
+                        st.markdown(f'<div class="panel-title" style="margin-bottom: 2px;">Form vs. Baseline · Multi-Season {metric_title}</div>', unsafe_allow_html=True)
                         st.markdown(
-                            f'<div style="padding: 1rem; border-left: 3px solid var(--mint); background: rgba(53,224,140,0.05); margin-top: 1rem; font-size: 0.88rem; border-radius: 8px;">'
-                            f'<b style="color: var(--mint);">🤖 AI Tactical Brief</b><br><br>{brief}'
-                            f'</div>', 
+                            '<div style="height: 160px; display: grid; place-items: center; border: 1px dashed var(--line); border-radius: 10px; color: var(--text-faint); font-size: 0.85rem; margin-top: 8px;">'
+                            'No valid tactical data available for this metric'
+                            '</div>',
                             unsafe_allow_html=True
                         )
-
-        with col_form:
-            target_pos = str(target_row.get("pos_clean", "MF")).upper()
-            if not df_timeline.empty and "season" in df_timeline.columns:
-                # Join on identity (accent-free name + birth year), not on the display name:
-                # names collide (two 'Rodri's) and vary by source ('Fermin' / 'Fermín').
-                target_pkey = target_row.get("pkey")
-                if "pkey" in df_timeline.columns and pd.notna(target_pkey):
-                    player_history = df_timeline[df_timeline["pkey"] == target_pkey].copy()
                 else:
-                    player_history = df_timeline[df_timeline["player"].str.lower() == str(target).lower()].copy()
-
-                # 1. One row per season, stints combined by minutes
-                seasons_played = sorted(player_history["season"].dropna().unique().tolist())
-                player_history = season_rollup(player_history)
-
-                # 2. Calculate the specific positional metric
-                form_view = st.radio(
-                    "Trend", ["Role metric", "Goals + assists · every season"], horizontal=True,
-                    label_visibility="collapsed", key="form_view",
-                    help="Role metrics use event data (xG, progression, defensive actions), which the "
-                         "provider publishes up to 2024-25. Goals and assists are current to this week.")
-                series_values, metric_title = get_position_form_metric(
-                    target_pos, player_history, actuals=form_view.startswith("Goals"))
-                player_history["form_metric"] = series_values
-                
-                # 3. Filter out ONLY the seasons where the form metric is completely missing
-                player_history = player_history.dropna(subset=["form_metric"])
-
-                # 4. Allow plotting even if there is only 1 valid historical season
-                if not player_history.empty:
-                    st.markdown(f'<div class="panel-title" style="margin-bottom: 2px;">Form vs. Baseline · Multi-Season {metric_title}</div>', unsafe_allow_html=True)
-
-                    fig_timeline = go.Figure()
-                    fig_timeline.add_trace(go.Scatter(
-                        x=player_history["season"],
-                        y=player_history["form_metric"],
-                        customdata=player_history["squad"],
-                        mode="lines+markers",
-                        line=dict(color=MINT, width=2.5, shape="spline", smoothing=0.3),
-                        marker=dict(size=8, color=INK, line=dict(color=MINT, width=2)),
-                        fill="tozeroy",
-                        fillcolor="rgba(53, 224, 140, 0.12)",
-                        hovertemplate=f"<b>%{{x}}</b> · %{{customdata}}<br>{metric_title}: %{{y:.2f}}<extra></extra>"
-                    ))
-
-                    fig_timeline.update_layout(
-                        paper_bgcolor="rgba(0,0,0,0)",
-                        plot_bgcolor="rgba(0,0,0,0)",
-                        font=dict(family="Inter, sans-serif", color=TEXT, size=11),
-                        margin=dict(t=15, b=25, l=35, r=20),
-                        height=185,
-                        xaxis=dict(showgrid=False, linecolor=LINE, tickfont=dict(color=TEXT_DIM, size=10)),
-                        yaxis=dict(gridcolor=GRID, zerolinecolor=GRID, linecolor=LINE, tickfont=dict(color=TEXT_DIM, size=10))
-                    )
-                    st.plotly_chart(fig_timeline, use_container_width=True, config={'displayModeBar': False})
-                    untracked = [s for s in seasons_played if s not in set(player_history["season"])]
-                    if untracked:
-                        st.caption(f"This metric is published up to {player_history['season'].max()}. "
-                                   "Switch to “Goals + assists” above for his output through the current season.")
-                else:
-                    st.markdown(f'<div class="panel-title" style="margin-bottom: 2px;">Form vs. Baseline · Multi-Season {metric_title}</div>', unsafe_allow_html=True)
+                    st.markdown('<div class="panel-title" style="margin-bottom: 2px;">Form vs. Baseline · Multi-Season Output</div>', unsafe_allow_html=True)
                     st.markdown(
                         '<div style="height: 160px; display: grid; place-items: center; border: 1px dashed var(--line); border-radius: 10px; color: var(--text-faint); font-size: 0.85rem; margin-top: 8px;">'
-                        'No valid tactical data available for this metric'
+                        'Run valuation_model.py to initialize player_timeline_db.csv'
                         '</div>',
                         unsafe_allow_html=True
                     )
-            else:
-                st.markdown('<div class="panel-title" style="margin-bottom: 2px;">Form vs. Baseline · Multi-Season Output</div>', unsafe_allow_html=True)
-                st.markdown(
-                    '<div style="height: 160px; display: grid; place-items: center; border: 1px dashed var(--line); border-radius: 10px; color: var(--text-faint); font-size: 0.85rem; margin-top: 8px;">'
-                    'Run valuation_model.py to initialize player_timeline_db.csv'
-                    '</div>',
-                    unsafe_allow_html=True
-                )
 
-    # --- RADAR AND CHART STUDIO ---
-    section_heading("Tactical overlay", "Percentile footprint and a free-form scatter")
-    with st.container(border=True):
-        col_radar, col_scatter = st.columns(2)
-        with col_radar:
-            st.markdown(f'<div class="panel-title">{pos} tactical footprint · percentile vs position</div>', unsafe_allow_html=True)
-            if top_clone:
-                radar_stats = get_radar_metrics(pos, df_master.columns)
-                target_pcts = [get_percentile(df_master, s, target_row.get(s), pos) for s in radar_stats]
-                clone_row = df_master[df_master["player"] == top_clone].iloc[0]
-                clone_pcts = [get_percentile(df_master, s, clone_row.get(s), pos) for s in radar_stats]
-                radar_stats, (target_pcts, clone_pcts), radar_dropped = radar_axes(radar_stats, [target_pcts, clone_pcts])
-                if radar_dropped:
-                    st.caption("Not recorded for one of these players, so left off the radar: "
-                               + ", ".join(label(s) for s in radar_dropped))
-            if top_clone and len(radar_stats) < 3:
-                st.markdown(
-                    '<div style="height: 220px; display: grid; place-items: center; border: 1px dashed var(--line); '
-                    'border-radius: 10px; color: var(--text-faint); font-size: 0.85rem; margin-top: 8px;">'
-                    'Not enough shared event data to draw a radar for this pair</div>', unsafe_allow_html=True)
-            if top_clone and len(radar_stats) >= 3:
-                categories = [label(s) for s in radar_stats] + [label(radar_stats[0])]
-                target_pcts.append(target_pcts[0]); clone_pcts.append(clone_pcts[0])
+    with sub_style:
+        # --- RADAR AND CHART STUDIO ---
+        section_heading("Tactical overlay", "Percentile footprint and a free-form scatter")
+        with st.container(border=True):
+            col_radar, col_scatter = st.columns(2)
+            with col_radar:
+                st.markdown(f'<div class="panel-title">{pos} tactical footprint · percentile vs position</div>', unsafe_allow_html=True)
+                if top_clone:
+                    radar_stats = get_radar_metrics(pos, df_master.columns)
+                    target_pcts = [get_percentile(df_master, s, target_row.get(s), pos) for s in radar_stats]
+                    clone_row = df_master[df_master["player"] == top_clone].iloc[0]
+                    clone_pcts = [get_percentile(df_master, s, clone_row.get(s), pos) for s in radar_stats]
+                    radar_stats, (target_pcts, clone_pcts), radar_dropped = radar_axes(radar_stats, [target_pcts, clone_pcts])
+                    if radar_dropped:
+                        st.caption("Not recorded for one of these players, so left off the radar: "
+                                   + ", ".join(label(s) for s in radar_dropped))
+                if top_clone and len(radar_stats) < 3:
+                    st.markdown(
+                        '<div style="height: 220px; display: grid; place-items: center; border: 1px dashed var(--line); '
+                        'border-radius: 10px; color: var(--text-faint); font-size: 0.85rem; margin-top: 8px;">'
+                        'Not enough shared event data to draw a radar for this pair</div>', unsafe_allow_html=True)
+                if top_clone and len(radar_stats) >= 3:
+                    categories = [label(s) for s in radar_stats] + [label(radar_stats[0])]
+                    target_pcts.append(target_pcts[0]); clone_pcts.append(clone_pcts[0])
 
-                fig_radar = go.Figure()
-                fig_radar.add_trace(go.Scatterpolar(r=target_pcts, theta=categories, fill="toself", name=target, line=dict(color=MINT, width=2), fillcolor="rgba(53, 224, 140, 0.20)"))
-                fig_radar.add_trace(go.Scatterpolar(r=clone_pcts, theta=categories, fill="toself", name=top_clone, line=dict(color=CYAN, width=2), fillcolor="rgba(76, 201, 240, 0.16)"))
-                fig_radar.update_layout(polar=dict(radialaxis=dict(visible=False, range=[0, 100])), legend=dict(orientation="h", y=1.14, xanchor="center", x=0.5))
-                st.plotly_chart(apply_custom_theme(fig_radar), use_container_width=True)
+                    fig_radar = go.Figure()
+                    fig_radar.add_trace(go.Scatterpolar(r=target_pcts, theta=categories, fill="toself", name=target, line=dict(color=MINT, width=2), fillcolor="rgba(53, 224, 140, 0.20)"))
+                    fig_radar.add_trace(go.Scatterpolar(r=clone_pcts, theta=categories, fill="toself", name=top_clone, line=dict(color=CYAN, width=2), fillcolor="rgba(76, 201, 240, 0.16)"))
+                    fig_radar.update_layout(polar=dict(radialaxis=dict(visible=False, range=[0, 100])), legend=dict(orientation="h", y=1.14, xanchor="center", x=0.5))
+                    st.plotly_chart(apply_custom_theme(fig_radar), use_container_width=True)
 
-        with col_scatter:
-            st.markdown('<div class="panel-title">Chart studio · plot any two metrics</div>', unsafe_allow_html=True)
-            available_axes = [c for c in ["actual_value_m", "predicted_value_m", "surplus_value_m"] + engine.feature_cols if c in df_master.columns]
-            drop1, drop2 = st.columns(2)
-            mx = drop1.selectbox("X-Axis", available_axes, format_func=label, index=0)
-            my = drop2.selectbox("Y-Axis", available_axes, format_func=label, index=3 if len(available_axes) > 3 else 0)
-            scatter_df = df_master.dropna(subset=[mx, my]).copy()
-            fig_scatter = go.Figure()
+            with col_scatter:
+                st.markdown('<div class="panel-title">Chart studio · plot any two metrics</div>', unsafe_allow_html=True)
+                available_axes = [c for c in ["actual_value_m", "predicted_value_m", "surplus_value_m"] + engine.feature_cols if c in df_master.columns]
+                drop1, drop2 = st.columns(2)
+                mx = drop1.selectbox("X-Axis", available_axes, format_func=label, index=0)
+                my = drop2.selectbox("Y-Axis", available_axes, format_func=label, index=3 if len(available_axes) > 3 else 0)
+                scatter_df = df_master.dropna(subset=[mx, my]).copy()
+                fig_scatter = go.Figure()
 
-            fig_scatter.add_trace(go.Scatter(x=scatter_df[mx], y=scatter_df[my], mode="markers", marker=dict(color="#4B6B5F", opacity=0.55, size=6, line=dict(width=0)), customdata=np.stack((scatter_df["player"], scatter_df[mx], scatter_df[my]), axis=-1), hovertemplate="<b>%{customdata[0]}</b><br>"+label(mx)+": %{customdata[1]:.2f}<br>"+label(my)+": %{customdata[2]:.2f}<extra></extra>", name="Population"))
-            if len(scatter_df) > 1:
-                slope, intercept = np.polyfit(scatter_df[mx], scatter_df[my], 1)
-                x_trend = np.linspace(scatter_df[mx].min(), scatter_df[mx].max(), 100)
-                fig_scatter.add_trace(go.Scatter(x=x_trend, y=slope * x_trend + intercept, mode="lines", line=dict(color=CYAN, width=1.6, dash="dot"), opacity=0.7, hoverinfo="skip", name="Trend"))
+                fig_scatter.add_trace(go.Scatter(x=scatter_df[mx], y=scatter_df[my], mode="markers", marker=dict(color="#4B6B5F", opacity=0.55, size=6, line=dict(width=0)), customdata=np.stack((scatter_df["player"], scatter_df[mx], scatter_df[my]), axis=-1), hovertemplate="<b>%{customdata[0]}</b><br>"+label(mx)+": %{customdata[1]:.2f}<br>"+label(my)+": %{customdata[2]:.2f}<extra></extra>", name="Population"))
+                if len(scatter_df) > 1:
+                    slope, intercept = np.polyfit(scatter_df[mx], scatter_df[my], 1)
+                    x_trend = np.linspace(scatter_df[mx].min(), scatter_df[mx].max(), 100)
+                    fig_scatter.add_trace(go.Scatter(x=x_trend, y=slope * x_trend + intercept, mode="lines", line=dict(color=CYAN, width=1.6, dash="dot"), opacity=0.7, hoverinfo="skip", name="Trend"))
 
-            fig_scatter.add_trace(go.Scatter(x=[target_row.get(mx)], y=[target_row.get(my)], mode="markers+text", marker=dict(color=MINT, size=15, symbol="diamond", line=dict(color="#06100D", width=2)), text=[target.split()[-1]], textposition="top center", textfont=dict(color=MINT, size=12), name=target))
-            if top_clone:
-                clone_val_x = df_master[df_master["player"] == top_clone].iloc[0].get(mx)
-                clone_val_y = df_master[df_master["player"] == top_clone].iloc[0].get(my)
-                fig_scatter.add_trace(go.Scatter(x=[clone_val_x], y=[clone_val_y], mode="markers+text", marker=dict(color=CYAN, size=15, symbol="star", line=dict(color="#06100D", width=2)), text=[top_clone.split()[-1]], textposition="top center", textfont=dict(color=CYAN, size=12), name=top_clone))
-            fig_scatter.update_layout(xaxis_title=label(mx), yaxis_title=label(my), showlegend=False)
-            st.plotly_chart(apply_custom_theme(fig_scatter), use_container_width=True)
+                fig_scatter.add_trace(go.Scatter(x=[target_row.get(mx)], y=[target_row.get(my)], mode="markers+text", marker=dict(color=MINT, size=15, symbol="diamond", line=dict(color="#06100D", width=2)), text=[target.split()[-1]], textposition="top center", textfont=dict(color=MINT, size=12), name=target))
+                if top_clone:
+                    clone_val_x = df_master[df_master["player"] == top_clone].iloc[0].get(mx)
+                    clone_val_y = df_master[df_master["player"] == top_clone].iloc[0].get(my)
+                    fig_scatter.add_trace(go.Scatter(x=[clone_val_x], y=[clone_val_y], mode="markers+text", marker=dict(color=CYAN, size=15, symbol="star", line=dict(color="#06100D", width=2)), text=[top_clone.split()[-1]], textposition="top center", textfont=dict(color=CYAN, size=12), name=top_clone))
+                fig_scatter.update_layout(xaxis_title=label(mx), yaxis_title=label(my), showlegend=False)
+                st.plotly_chart(apply_custom_theme(fig_scatter), use_container_width=True)
+
+# --- REPLACE A PLAYER ---
+with tab_replace:
+    section_heading("Replace a player", "The same profile, cheaper, and suited to your club")
+    st.info("**How this works:** choose the player you need to replace in the sidebar, and the club doing the buying here. StatTrick finds "
+            "the closest statistical matches, then keeps only those you could plausibly sign: active this season, "
+            "within budget and age, and not already at your club. Each is scored for fit to your club's style.")
+    rp_squads = sorted(system_engine.club_profiles["squad"].unique().tolist())
+    rp1, rp2 = st.columns(2)
+    rp_player = target                      # the player chosen in the sidebar
+    rp1.markdown(f'<div class="panel-title">Player to replace</div>'
+                 f'<div class="fit-archetype" style="font-size:1.4rem;">{rp_player}</div>'
+                 f'<div class="fit-club">Change him with “Select Target Player” in the sidebar</div>',
+                 unsafe_allow_html=True)
+    rp_row = df_master[df_master["player"] == rp_player].iloc[0]
+    rp_home = str(rp_row.get("squad", ""))
+    rp_club = rp2.selectbox("Buying club", rp_squads,
+                            index=rp_squads.index(rp_home) if rp_home in rp_squads else 0, key=f"rp_club_{rp_player}")
+    rp_val = safe_float(rp_row.get("actual_value_m"), 20.0)
+    rp3, rp4, rp5, rp6 = st.columns(4)
+    rp_budget = rp3.slider("Budget: max market value (€M)", 1, 200, int(min(200, max(1, round(rp_val)))), key=f"rp_budget_{rp_player}",
+                           help="Transfermarkt value as a stand-in for the fee. Defaults to the value of the player being replaced.")
+    rp_age = rp4.slider("Max age", 17, 36, 28, key="rp_age")
+    rp_same_pos = rp5.checkbox("Same position only", True, key="rp_same_pos")
+    rp_rank = rp6.selectbox("Rank by", ["Blend", "Similarity", "Value edge", "Club fit"], key="rp_rank")
+
+    pool = engine.find_similar_players(rp_player, top_n=400, same_position=rp_same_pos)
+    if not isinstance(pool, pd.DataFrame) or pool.empty:
+        st.warning("Could not compute matches for this player.")
+    else:
+        pool = pool.rename(columns={"Player": "player"})
+        pool["similarity"] = pd.to_numeric(pool["Similarity Score"].astype(str).str.rstrip("%"), errors="coerce")
+        keep_cols = [c for c in ["player", "squad", "league", "pos_clean", "age_clean", "contract_years_left",
+                                 "actual_value_m", "predicted_value_m", "edge_z", "outside_band",
+                                 "forecast_change_pct", "match_method"] if c in df_master.columns]
+        cand = pool[["player", "similarity"]].merge(df_master[keep_cols], on="player", how="inner")
+        cand = cand[cand["player"].isin(RECRUITABLE)
+                    & (cand["squad"].str.lower() != rp_club.lower())
+                    & (cand["actual_value_m"] <= rp_budget)
+                    & (pd.to_numeric(cand["age_clean"], errors="coerce") <= rp_age)]
+        if "match_method" in cand.columns:
+            cand = cand[cand["match_method"] == "exact"]
+        cand = cand.head(40).copy()                       # the 40 closest that pass the filters
+        if cand.empty:
+            st.warning("No one fits. Raise the budget or the age limit, or untick 'Same position only'.")
+        else:
+            cand["fit"] = [system_engine.calculate_system_fit(p, rp_club).get("fit_score") for p in cand["player"]]
+            z = lambda s: (s - s.mean()) / (s.std() if s.std() and s.std() > 0 else 1.0)      # noqa: E731
+            fit_num = pd.to_numeric(cand["fit"], errors="coerce")
+            edge_num = pd.to_numeric(cand.get("edge_z"), errors="coerce") if "edge_z" in cand.columns else pd.Series(0.0, index=cand.index)
+            cand["blend"] = (0.5 * z(cand["similarity"]) + 0.25 * z(edge_num.fillna(edge_num.median())).clip(-2.5, 2.5)
+                             + 0.25 * z(fit_num.fillna(fit_num.median() if fit_num.notna().any() else 50.0)))
+            sort_col = {"Blend": "blend", "Similarity": "similarity", "Value edge": "edge_z", "Club fit": "fit"}[rp_rank]
+            if sort_col not in cand.columns:
+                sort_col = "similarity"
+            cand = cand.sort_values(sort_col, ascending=False).head(15)
+
+            cheaper = cand["actual_value_m"].median()
+            render_metrics_html([
+                ("Replacing", str(rp_player).split()[-1], f"{rp_row.get('pos_clean', '')} · {fmt_eur_m(rp_val)} · age {safe_float(rp_row.get('age_clean')):.0f}", "neutral"),
+                ("Candidates shown", f"{len(cand)}", f"Ranked by {rp_rank.lower()}", "neutral"),
+                ("Median market value", fmt_eur_m(cheaper),
+                 f"{(1 - cheaper / rp_val) * 100:.0f}% below the player replaced" if rp_val > 0 and cheaper < rp_val else "Of the candidates", "positive" if cheaper < rp_val else "neutral"),
+                ("Best similarity", f"{cand['similarity'].max():.0f}%", "Closest statistical match", "neutral"),
+            ])
+            st.write("")
+            show = cand[[c for c in ["player", "squad", "pos_clean", "age_clean", "similarity", "fit", "actual_value_m",
+                                     "predicted_value_m", "edge_z", "forecast_change_pct", "contract_years_left"] if c in cand.columns]].copy()
+            for c_ in ["actual_value_m", "predicted_value_m"]:
+                if c_ in show.columns:
+                    show[c_] = show[c_].apply(fmt_eur_m)
+            if "forecast_change_pct" in show.columns:
+                show["forecast_change_pct"] = show["forecast_change_pct"].apply(lambda v: format_value(v, "surplus_pct"))
+            show = show.rename(columns={"similarity": "Similarity (%)", "fit": f"Fit to {rp_club}",
+                                        **{c_: label(c_) for c_ in show.columns if c_ not in ("similarity", "fit")}})
+            st.dataframe(show, hide_index=True, use_container_width=True, column_config={
+                "Similarity (%)": st.column_config.ProgressColumn("Similarity (%)", min_value=0.0, max_value=100.0, format="%.1f%%"),
+                f"Fit to {rp_club}": st.column_config.NumberColumn(f"Fit to {rp_club}", format="%.1f"),
+            })
+            rb1, rb2 = st.columns(2)
+            rb1.download_button("Download candidates (CSV)", show.to_csv(index=False).encode("utf-8"),
+                                file_name=f"stattrick_replace_{str(rp_player).replace(' ', '_')}.csv", mime="text/csv")
+            _rp_top = cand["player"].head(5).tolist()
+            rb2.button(f"＋ Add top {len(_rp_top)} to shortlist", key="rp_add", on_click=_shortlist_add, args=(_rp_top,))
+            st.caption("Similarity describes statistical style, not quality. Value edge is how far the market price sits "
+                       "below the performance value, in units of the player's own fair band; a blank fit means the club "
+                       "has too few players in that position group to profile. Blend = half similarity, a quarter value "
+                       "edge, a quarter club fit.")
 
 # --- TAB 2: ARBITRAGE SCREENER ---
 with tab2:
@@ -1845,6 +1946,74 @@ with tab4:
                 st.dataframe(display_df, hide_index=True, use_container_width=True)
             else:
                 st.warning("No players matched the specific position filter and surplus criteria.")
+
+# --- TEAM VIEW ---
+with tab_team:
+    section_heading("Team view", "One club's squad, priced three ways")
+    tv_squads = sorted(df_master["squad"].dropna().unique().tolist())
+    tv_default = str(target_row.get("squad", ""))
+    tv_club = st.selectbox("Club", tv_squads, index=tv_squads.index(tv_default) if tv_default in tv_squads else 0,
+                           key=f"tv_club_{tv_default}", help="Starts on the club of the player chosen in the sidebar.")
+    tv_all = df_master[df_master["squad"] == tv_club].copy()
+    tv_only_active = st.checkbox("Only players with minutes this season", True, key="tv_active")
+    tv = tv_all[tv_all["active_now"]] if tv_only_active else tv_all
+    if tv.empty:
+        st.info("No players in the database for this club with the current filter.")
+    else:
+        mv, pv = pd.to_numeric(tv["actual_value_m"], errors="coerce"), pd.to_numeric(tv["predicted_value_m"], errors="coerce")
+        cyl = pd.to_numeric(tv["contract_years_left"], errors="coerce")
+        over = int((tv["outside_band"] == -1).sum()) if "outside_band" in tv.columns else 0
+        under = int((tv["outside_band"] == 1).sum()) if "outside_band" in tv.columns else 0
+        render_metrics_html([
+            ("Players", f"{len(tv)}", f"of {len(tv_all)} in the database", "neutral"),
+            ("Squad market value", fmt_big(mv.sum()), "Transfermarkt", "neutral"),
+            ("Squad performance value", fmt_big(pv.sum()), f"{(pv.sum() / mv.sum() - 1) * 100:+.0f}% vs market" if mv.sum() > 0 else "", "neutral"),
+            ("Median age", f"{pd.to_numeric(tv['age_clean'], errors='coerce').median():.1f}", "", "neutral"),
+            ("Contracts ending within a year", f"{int((cyl <= 1.0).sum())}", f"{int(cyl.isna().sum())} unknown", "negative" if (cyl <= 1.0).sum() else "neutral"),
+        ])
+        st.write("")
+        with st.container(border=True):
+            st.markdown('<div class="panel-title">Market value against performance value · each dot is a player</div>', unsafe_allow_html=True)
+            band = tv["outside_band"] if "outside_band" in tv.columns else pd.Series(0, index=tv.index)
+            fig_tv = go.Figure()
+            top_ = float(np.nanmax([mv.max(), pv.max()])) * 1.08 if len(tv) else 1.0
+            fig_tv.add_trace(go.Scatter(x=[0, top_], y=[0, top_], mode="lines", line=dict(color=LINE, width=1.2, dash="dot"),
+                                        hoverinfo="skip", showlegend=False))
+            for code, name_, color in [(-1, "Priced above performance band", CORAL), (0, "Inside band", TEXT_DIM), (1, "Priced below performance band", MINT)]:
+                part = tv[band == code]
+                if part.empty:
+                    continue
+                fig_tv.add_trace(go.Scatter(
+                    x=part["predicted_value_m"], y=part["actual_value_m"], mode="markers", name=name_,
+                    marker=dict(size=10, color=color, line=dict(color=INK, width=1.5)),
+                    customdata=np.stack((part["player"], part["pos_clean"], part["age_clean"]), axis=-1),
+                    hovertemplate="<b>%{customdata[0]}</b> · %{customdata[1]} · %{customdata[2]:.0f}<br>"
+                                  "Performance €%{x:.1f}M<br>Market €%{y:.1f}M<extra></extra>"))
+            fig_tv.update_layout(height=380, margin=dict(t=20, b=40, l=50, r=20), xaxis_title="Performance value (€M)",
+                                 yaxis_title="Market value (€M)", legend=dict(orientation="h", y=1.1, x=0))
+            st.plotly_chart(apply_custom_theme(fig_tv), use_container_width=True, config={"displayModeBar": False})
+            st.caption(f"Above the dotted line the market pays more than the output justifies; below it, less. "
+                       f"{over} player(s) sit above their fair band and {under} below it.")
+
+        tv_cols = [c for c in ["player", "pos_clean", "age_clean", "min", "contract_years_left", "actual_value_m",
+                               "predicted_value_m", "status_premium_m", "edge_z", "forecast_value_m", "forecast_change_pct"] if c in tv.columns]
+        tv_show = tv.sort_values("actual_value_m", ascending=False)[tv_cols].copy()
+        tv_export = tv_show.rename(columns={c: label(c) for c in tv_cols})
+        for c_ in ["actual_value_m", "predicted_value_m", "status_premium_m", "forecast_value_m"]:
+            if c_ in tv_show.columns:
+                tv_show[c_] = tv_show[c_].apply(fmt_eur_m)
+        if "forecast_change_pct" in tv_show.columns:
+            tv_show["forecast_change_pct"] = tv_show["forecast_change_pct"].apply(lambda v: format_value(v, "surplus_pct"))
+        if "min" in tv_show.columns:
+            tv_show["min"] = tv_show["min"].apply(lambda v: format_value(v, "min"))
+        if "contract_years_left" in tv_show.columns:
+            tv_show["contract_years_left"] = tv_show["contract_years_left"].apply(lambda v: format_value(v, "contract_years_left"))
+        st.dataframe(tv_show.rename(columns={c: label(c) for c in tv_cols}), hide_index=True, use_container_width=True)
+        st.download_button("Download squad (CSV)", tv_export.to_csv(index=False).encode("utf-8"),
+                           file_name=f"stattrick_team_{tv_club.replace(' ', '_')}.csv", mime="text/csv")
+        st.caption("Clubs are as FBref lists them this season. Market values and contracts come from the Transfermarkt "
+                   "snapshot, so a player who moved here recently carries his previous club's valuation and a blank contract. "
+                   "Only players with 1,500+ career minutes in the top five leagues are in the database.")
 
 # --- SHORTLIST ---
 with tab_short:
