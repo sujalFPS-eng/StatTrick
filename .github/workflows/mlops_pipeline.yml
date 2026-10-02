@@ -31,6 +31,7 @@ jobs:
 
     - name: Stage 0A - Ingest Live Tactical Data (FBref)
       run: xvfb-run python src/ingest_fbref.py
+      continue-on-error: true
 
     - name: Stage 0B - Ingest Financials and Valuation History (Transfermarkt)
       run: python src/ingest_valuations.py
