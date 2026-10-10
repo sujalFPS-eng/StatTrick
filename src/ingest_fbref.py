@@ -5,6 +5,10 @@ Fixes vs. the original (#13 in the audit):
     so a broken scrape still exited 0, the CI job proceeded to retrain on stale/partial data,
     and committed it. Every failure path now raises SystemExit(1), and a run is rejected if
     row counts or column coverage fall below a sane floor.
+  - The possession-adjustment (PAdj) step is gone (Oct 2026). It only ever rescaled the *_per90
+    columns of this file, which valuation_model.py discards (it recomputes every per-90 from raw
+    counts), so no stored value was ever adjusted, and past seasons have no squad possession to
+    adjust consistently. Dropping it also saves one FBref page load per run.
   - The defense-table merge and the squad-possession PAdj step used to apply silently even
     when the source columns were entirely empty (this is exactly what happened to the
     2026-27 scrape: Tkl/Clr/Blk were 100% NaN and Poss was absent, so the whole PAdj
@@ -26,7 +30,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import numpy as np
 import pandas as pd
 from bs4 import BeautifulSoup, Comment
 from seleniumbase import SB
@@ -63,7 +66,6 @@ def _wait_for_table(sb, selector: str, seconds: int = TABLE_WAIT_S) -> bool:
 def scrape_fbref_stealth() -> Path:
     player_url = "https://fbref.com/en/comps/Big5/stats/players/Big-5-European-Leagues-Stats"
     defense_url = "https://fbref.com/en/comps/Big5/defense/players/Big-5-European-Leagues-Stats"
-    possession_url = "https://fbref.com/en/comps/Big5/possession/squads/Big-5-European-Leagues-Stats"
     headless = os.getenv("SELENIUM_HEADLESS", "0") == "1"
 
     print("Initializing SeleniumBase (Undetected ChromeDriver)...")
@@ -124,35 +126,6 @@ def scrape_fbref_stealth() -> Path:
             else:
                 print("  WARNING: defense table not found in page source; skipping merge.")
 
-        # ---- 3. squad possession (for PAdj) --------------------------------------
-        print(f"Fetching squad possession: {possession_url}")
-        sb.open(possession_url)
-        if not _wait_for_table(sb, "table[id^='stats_squads_possession_for']"):
-            print("  WARNING: possession table did not load; PAdj multiplier NOT applied this run "
-                 "(raw per-90 values kept instead of silently skipping the adjustment).")
-        else:
-            sb.sleep(2)
-            sq_table = find_stats_table(sb.get_page_source(), "stats_squads_possession_for")
-            if sq_table is not None:
-                sq_df = pd.read_html(StringIO(str(sq_table)))[0]
-                if sq_df.columns.nlevels > 1:
-                    sq_df.columns = sq_df.columns.droplevel()
-                sq_df = sq_df[["Squad", "Poss"]].copy()
-                sq_df["Poss"] = pd.to_numeric(sq_df["Poss"], errors="coerce")
-                if sq_df["Poss"].notna().mean() < MIN_COVERAGE:
-                    print("  WARNING: possession coverage too low; PAdj NOT applied this run.")
-                else:
-                    median_poss = sq_df["Poss"].median()
-                    df = df.merge(sq_df, on="Squad", how="left")
-                    df["Poss"] = df["Poss"].fillna(median_poss)
-                    multiplier = 1 + (0.8 / (1 + np.exp(-0.08 * (df["Poss"] - median_poss)))) - 0.4
-                    for col in ["tkl_per90", "int_per90", "clr_per90", "blk_per90"]:
-                        if col in df.columns:
-                            df[col] = df[col] * multiplier
-                    print(f"  PAdj applied (median possession {median_poss:.1f}%)")
-            else:
-                print("  WARNING: possession table not found in page source; PAdj NOT applied.")
-
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     out_path = DATA_DIR / "live_fbref_data.csv"
     df.to_csv(out_path, index=False)
@@ -167,7 +140,6 @@ def scrape_fbref_stealth() -> Path:
     write_json(DATA_DIR / "live_health.json", {
         "players": int(len(df)),
         "defense_merged": "Tkl" in df.columns,
-        "padj_applied": "Poss" in df.columns and df["Poss"].notna().any(),
     })
     print(f"Ingestion complete: {len(df)} active players -> {out_path}")
     return out_path

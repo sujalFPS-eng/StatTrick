@@ -1,0 +1,58 @@
+{
+  "holdout": "2024-2025",
+  "players": 982,
+  "run_on": "2026-10-10",
+  "variants": {
+    "original": {
+      "players": 982,
+      "top1": 0.0682,
+      "top5": 0.1925,
+      "top10": 0.278,
+      "median_rank": 35.0,
+      "mrr": 0.1389,
+      "clone_overlap@10": 0.0957
+    },
+    "+ minutes shrinkage": {
+      "players": 982,
+      "top1": 0.1212,
+      "top5": 0.278,
+      "top10": 0.3676,
+      "median_rank": 20.0,
+      "mrr": 0.2058,
+      "clone_overlap@10": 0.1729
+    },
+    "current settings": {
+      "players": 982,
+      "top1": 0.1253,
+      "top5": 0.2923,
+      "top10": 0.4043,
+      "median_rank": 17.0,
+      "mrr": 0.216,
+      "clone_overlap@10": 0.1702
+    },
+    "tuned (this run)": {
+      "players": 982,
+      "top1": 0.1334,
+      "top5": 0.2912,
+      "top10": 0.4002,
+      "median_rank": 17.0,
+      "mrr": 0.2224,
+      "clone_overlap@10": 0.1756
+    }
+  },
+  "settings": {
+    "blend": 0.2,
+    "emphasis": 0.5,
+    "role_weight": 0.25
+  },
+  "tuning": {
+    "season": "2023-2024",
+    "players": 811,
+    "best": {
+      "blend": 0.2,
+      "emphasis": 0.0,
+      "role_weight": 0.0
+    },
+    "grid_size": 96
+  }
+}
