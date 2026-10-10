@@ -64,10 +64,13 @@ GitHub Actions maintains a live, weekly-updating scouting database.
 * **FBref ingestion** via `seleniumbase` (Undetected Chrome) under a virtual display. In
   practice Cloudflare blocks it from GitHub Actions most weeks, so the step is
   `continue-on-error`: the scraper exits non-zero instead of writing a partial file, and the
-  rest of the job runs on the last good FBref data. Current-season goals, assists, shots and
-  minutes are therefore only as fresh as the last successful scrape.
-* **Understat** backfills xG and xA (FBref lost its Opta feed after 2024-25); progressive and
-  defensive stats stop at 2024-25.
+  rest of the job runs on the last good FBref data.
+* **Understat** (scraped weekly) backfills xG and xA (FBref lost its Opta feed after 2024-25),
+  and keeps the current season fresh when FBref is blocked: a player whose Understat minutes are
+  a match or more ahead of FBref takes Understat's minutes, goals, assists, shots, xG and xA, and
+  a player FBref has no row for yet is added if his earlier seasons identify him. Stats Understat
+  doesn't publish keep the per-90 rate FBref last measured. Progressive and defensive stats
+  stop at 2024-25.
 * **Fail-loud ingestion:** each stage exits non-zero on a bad scrape or a broken
   Transfermarkt schema rather than silently committing a degraded file.
 * **Health gate:** the workflow reads `data/model_metrics.json` after retraining and refuses

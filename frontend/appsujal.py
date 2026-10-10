@@ -2155,7 +2155,7 @@ are trained to approximate and the benchmark they are compared against.
 
 | Data | Source | Through |
 |---|---|---|
-| Goals, assists, shots, minutes | FBref | {_cur}, refreshed weekly |
+| Goals, assists, shots, minutes | FBref, or Understat when FBref is behind | {_cur}, refreshed weekly |
 | xG and xA | FBref to {_adv or "—"}, then Understat | {_xg or _cur} |
 | Progression, defensive actions | FBref | {_adv or "—"} (last season published) |
 | Market value, contract, position | Transfermarkt | latest snapshot |

@@ -49,6 +49,8 @@ RAW_STATS = ["gls", "ast", "xg", "xag", "sh", "sot", "prgc", "prgp",
 PER90_COLS = [f"{s}_per90" for s in RAW_STATS]
 ADVANCED = ["xg", "xag", "prgc", "prgp"]
 ID_COLS = ["player", "born", "pos", "squad", "league", "age", "min"]
+# Understat season totals that stand in for stale FBref rows (our column -> Understat column)
+UNDERSTAT_TOTALS = {"gls": "goals", "ast": "assists", "sh": "shots", "xg": "xG", "xag": "xA"}
 
 # ---------------------------------------------------------------------------- sources
 # Column maps are applied AFTER lower-casing + stripping. One explicit map per source.
@@ -150,57 +152,160 @@ def load_source(fname, tag, rank, season, colmap, drop) -> pd.DataFrame | None:
     return out
 
 
-def attach_understat(df: pd.DataFrame) -> pd.DataFrame:
+def _understat_files() -> list[Path]:
+    return sorted(DATA_DIR.glob("understat_[0-9][0-9][0-9][0-9].csv"))
+
+
+def _load_understat(path: Path) -> tuple[str, pd.DataFrame] | None:
+    """One Understat season file -> (season, rows with minutes), or None if the layout is off."""
+    season = _yyzz_season(path.stem)
+    u = pd.read_csv(path)
+    if season is None or not {"player_name", "team_title", "time", "xG", "xA"} <= set(u.columns):
+        print(f"  ! {path.name}: unexpected layout, skipped")
+        return None
+    u["time"] = pd.to_numeric(u["time"], errors="coerce")
+    u = u[u["time"] > 0].reset_index(drop=True)
+    u["nk"] = u["player_name"].map(name_key)
+    u["teams"] = u["team_title"].astype(str).map(lambda t: {canon_club(x.strip()) for x in t.split(",")})
+    return season, u
+
+
+def _match_understat(df: pd.DataFrame, idx, u: pd.DataFrame, minutes_ok) -> list:
+    """Pair each player-season in df.loc[idx] with at most one Understat row: exact accent-free
+    name first (namesakes: same club, then closest minutes); otherwise a name that contains / is
+    contained in the other, at the SAME club, where minutes_ok(understat_minutes, fbref_minutes).
+    Returns [(df row index, Understat row or None), ...], one entry per player."""
+    by_name = u.groupby("nk").indices
+    used: set = set()
+    pending = []
+    for pkey, g in df.loc[idx].groupby("pkey", sort=False):     # pass 1: exact names
+        nk, squads, mins = name_key(g["player"].iloc[0]), set(g["squad"]), g["min"].sum()
+        cand = [i for i in by_name.get(nk, []) if i not in used]
+        if len(cand) > 1:                                        # namesakes: same club, then closest minutes
+            same = [i for i in cand if u.at[i, "teams"] & squads]
+            cand = sorted(same or cand, key=lambda i: abs(u.at[i, "time"] - mins))[:1]
+        if cand:
+            used.add(cand[0]); pending.append((g.index, cand[0]))
+        else:
+            pending.append((g.index, None))
+    for k, (rows, hit) in enumerate(pending):                    # pass 2: partial names at the same club
+        if hit is not None:
+            continue
+        g = df.loc[rows]
+        nk, squads, mins = name_key(g["player"].iloc[0]), set(g["squad"]), g["min"].sum()
+        best, best_score = None, 0
+        for i in u.index[u["teams"].map(lambda t: bool(t & squads))]:
+            if i in used or not minutes_ok(u.at[i, "time"], mins):
+                continue
+            score = fuzz.token_set_ratio(nk, u.at[i, "nk"])
+            if score >= 85 and score > best_score:
+                best, best_score = i, score
+        if best is not None:
+            used.add(best); pending[k] = (rows, best)
+    return pending
+
+
+def refresh_from_understat(df: pd.DataFrame, files: list[Path] | None = None) -> pd.DataFrame:
+    """Keep recent minutes, goals, assists and shots current when the FBref scrape fails.
+
+    Cloudflare blocks ingest_fbref.py from GitHub Actions most weeks, so the newest FBref rows can
+    be several matchdays old, and a player who has debuted since has no row at all. Understat is
+    scraped every week and publishes minutes, goals, assists, shots, xG and xA. For the season in
+    progress and the one before:
+      - a matched player whose Understat minutes are at least a full match ahead of FBref takes
+        Understat's minutes, goals, assists, shots, xG and xA. Stats Understat does not publish
+        (shots on target, tackles, ...) are scaled with the minutes, so their per-90 rate stays
+        what FBref last measured instead of being diluted;
+      - in the season in progress, a player Understat has but FBref does not is added when his
+        earlier FBref seasons identify him (birth year, position). Players new to the Big 5 have no
+        birth year to key on and are left out.
+    Players who changed club mid-season (several FBref rows) are left as FBref has them.
+    Where each row's minutes came from is recorded in `min_src`."""
+    df["min_src"] = "fbref"
+    df[["min"] + RAW_STATS] = df[["min"] + RAW_STATS].astype(float)      # scaled totals are fractional
+    files = _understat_files() if files is None else files
+    cur = current_season_start()
+    refreshed = added = 0
+    for path in files:
+        loaded = _load_understat(path)
+        if loaded is None:
+            continue
+        season, u = loaded
+        if season_start(season) < cur - 1:
+            continue
+        idx = df.index[df["season"] == season]
+        # Understat can be ahead of a stale FBref row, never meaningfully behind it
+        pending = _match_understat(df, idx, u, lambda ut, mins: ut >= mins - 120)
+        for rows, hit in pending:
+            if hit is None or len(rows) != 1:
+                continue
+            r, ut = rows[0], float(u.at[hit, "time"])
+            old = float(df.at[r, "min"])
+            if ut < old + 90:
+                continue
+            for c in RAW_STATS:
+                if pd.notna(df.at[r, c]):
+                    df.at[r, c] = df.at[r, c] * ut / old
+            for col, ucol in UNDERSTAT_TOTALS.items():
+                if pd.notna(u.at[hit, ucol]):
+                    df.at[r, col] = float(u.at[hit, ucol])
+            df.at[r, "min"], df.at[r, "min_src"] = ut, "understat"
+            refreshed += 1
+
+        if season_start(season) != cur:
+            continue
+        matched = {hit for _, hit in pending if hit is not None}
+        in_season = set(df.loc[idx, "pkey"])
+        hist = df[df["season"] < season].sort_values("season").drop_duplicates("pkey", keep="last")
+        hist = hist.assign(nk=hist["player"].map(name_key)).reset_index(drop=True)
+        by_nk = hist.groupby("nk").indices
+        new_rows = []
+        for i in u.index.difference(sorted(matched)):
+            teams = u.at[i, "teams"]
+            if len(teams) != 1:
+                continue
+            cands = hist.iloc[by_nk.get(u.at[i, "nk"], [])]
+            if len(cands) > 1:
+                cands = cands[cands["squad"].isin(teams)]
+            if len(cands) != 1 or cands["pkey"].iloc[0] in in_season or pd.isna(cands["born"].iloc[0]):
+                continue
+            prev = cands.iloc[0]
+            row = {c: np.nan for c in df.columns}
+            row.update({"player": prev["player"], "born": prev["born"], "pos": prev["pos"], "pkey": prev["pkey"],
+                        "squad": next(iter(teams)), "age": season_start(season) - prev["born"],
+                        "league": canon_league(u.at[i, "league"]) if "league" in u.columns else prev["league"],
+                        "season": season, "src": "understat", "rank": 3, "min": float(u.at[i, "time"]),
+                        "min_src": "understat"})
+            row.update({col: float(u.at[i, ucol]) for col, ucol in UNDERSTAT_TOTALS.items()})
+            new_rows.append(row)
+        if new_rows:
+            df = pd.concat([df, pd.DataFrame(new_rows, columns=df.columns)], ignore_index=True)
+            added += len(new_rows)
+    print(f"Understat refreshed {refreshed:,} stale FBref player-seasons and added {added:,} missing ones")
+    return df
+
+
+def attach_understat(df: pd.DataFrame, files: list[Path] | None = None) -> pd.DataFrame:
     """Fill xG / xA from Understat wherever FBref has none (2025-26 onward, after FBref lost its
     Opta feed; also xA for the older 'cleaned' seasons if those Understat files are present).
     FBref's own values are never overwritten.
 
-    Matching, per season: exact accent-free name first; otherwise a name that contains / is
-    contained in the other, at the SAME club, with minutes that agree. Understat reports a player
-    who moved mid-season once, so its per-90 rate is applied to each FBref stint's minutes."""
-    files = sorted(DATA_DIR.glob("understat_[0-9][0-9][0-9][0-9].csv"))
-    df["xg_src"] = np.where(df["xg"].notna(), "fbref", None)
+    Matching is _match_understat with minutes that agree. Understat reports a player who moved
+    mid-season once, so its per-90 rate is applied to each FBref stint's minutes."""
+    files = _understat_files() if files is None else files
+    from_understat = df["min_src"].eq("understat") if "min_src" in df.columns else False
+    df["xg_src"] = np.where(df["xg"].notna(), np.where(from_understat, "understat", "fbref"), None)
     if not files:
         print("  (no understat_YYZZ.csv files - xG stays as published by FBref)")
         return df
     filled = 0
     for path in files:
-        season = _yyzz_season(path.stem)
-        u = pd.read_csv(path)
-        if season is None or not {"player_name", "team_title", "time", "xG", "xA"} <= set(u.columns):
-            print(f"  ! {path.name}: unexpected layout, skipped"); continue
-        u = u[pd.to_numeric(u["time"], errors="coerce") > 0].reset_index(drop=True)
-        u["nk"] = u["player_name"].map(name_key)
-        u["teams"] = u["team_title"].astype(str).map(lambda t: {canon_club(x.strip()) for x in t.split(",")})
-        by_name = u.groupby("nk").indices
-        used: set = set()
+        loaded = _load_understat(path)
+        if loaded is None:
+            continue
+        season, u = loaded
         idx = df.index[df["season"] == season]
-        groups = df.loc[idx].groupby("pkey", sort=False)
-        pending = []
-        for pkey, g in groups:                                   # pass 1: exact names
-            nk, squads, mins = name_key(g["player"].iloc[0]), set(g["squad"]), g["min"].sum()
-            cand = [i for i in by_name.get(nk, []) if i not in used]
-            if len(cand) > 1:                                    # namesakes: same club, then closest minutes
-                same = [i for i in cand if u.at[i, "teams"] & squads]
-                cand = sorted(same or cand, key=lambda i: abs(u.at[i, "time"] - mins))[:1]
-            if cand:
-                used.add(cand[0]); pending.append((g.index, cand[0]))
-            else:
-                pending.append((g.index, None))
-        for k, (rows, hit) in enumerate(pending):                # pass 2: partial names at the same club
-            if hit is not None:
-                continue
-            g = df.loc[rows]
-            nk, squads, mins = name_key(g["player"].iloc[0]), set(g["squad"]), g["min"].sum()
-            best, best_score = None, 0
-            for i in u.index[u["teams"].map(lambda t: bool(t & squads))]:
-                if i in used or abs(u.at[i, "time"] - mins) > max(120, 0.2 * mins):
-                    continue
-                score = fuzz.token_set_ratio(nk, u.at[i, "nk"])
-                if score >= 85 and score > best_score:
-                    best, best_score = i, score
-            if best is not None:
-                used.add(best); pending[k] = (rows, best)
+        pending = _match_understat(df, idx, u, lambda ut, mins: abs(ut - mins) <= max(120, 0.2 * mins))
         matched = 0
         for rows, hit in pending:
             if hit is None:
@@ -250,6 +355,7 @@ def build_player_seasons() -> pd.DataFrame:
     twins = df.groupby(["pkey", "season"]).filter(lambda g: len(g) > 1 and g["min"].nunique() < len(g))
     print(f"Possible residual club-spelling duplicates: {len(twins)} rows")
 
+    df = refresh_from_understat(df)
     df = attach_understat(df)
 
     m90 = df["min"] / 90.0

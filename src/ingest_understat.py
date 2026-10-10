@@ -11,7 +11,10 @@ decision. Keep the volume this low.
 Output: data/understat_YYZZ.csv, one file per season, one row per player. A player who moved
 mid-season appears ONCE, with both clubs in `team_title` ("Aston Villa,Chelsea").
 
-This script only downloads and saves. It is not yet wired into valuation_model.py.
+This script only downloads and saves. valuation_model.py uses the files twice: xG / xA fill
+wherever FBref has none (attach_understat), and minutes / goals / assists / shots stand in for
+FBref rows that are stale or missing this season when the FBref scrape is blocked
+(refresh_from_understat).
 
 Usage:
     python src/ingest_understat.py            # season in progress + the one before
