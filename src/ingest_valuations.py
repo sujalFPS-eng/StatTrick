@@ -33,6 +33,8 @@ REQUIRED_COLUMNS = {"name", "market_value_in_eur", "last_season", "date_of_birth
                     "contract_expiration_date"}
 HISTORY_URL = URL.replace("players.csv.gz", "player_valuations.csv.gz")
 HISTORY_REQUIRED = {"player_id", "date", "market_value_in_eur"}
+TRANSFERS_URL = URL.replace("players.csv.gz", "transfers.csv.gz")
+TRANSFERS_REQUIRED = {"player_id", "transfer_date", "to_club_name"}
 MIN_ROWS = 20_000
 MIN_VALUED_ROWS = 5_000
 
@@ -105,6 +107,34 @@ def fetch_valuation_history() -> Path | None:
     return out_path
 
 
+def fetch_transfers() -> Path | None:
+    """Every Transfermarkt transfer (incl. loans). The players table lags behind: after the summer
+    window it can still list a player at the club he just left, while this file already has the
+    move. valuation_model.py applies the latest completed transfer to each player's club. Never
+    fatal: without it the players table is used as is."""
+    print(f"Downloading transfers from {TRANSFERS_URL} ...")
+    try:
+        resp = requests.get(TRANSFERS_URL, headers=HEADERS, timeout=120)
+        resp.raise_for_status()
+        with gzip.open(io.BytesIO(resp.content), "rt", encoding="utf-8") as f:
+            tr = pd.read_csv(f, low_memory=False)
+    except Exception as exc:
+        print(f"WARNING: transfers not refreshed ({exc}); keeping any existing file.")
+        return None
+    missing = TRANSFERS_REQUIRED - set(tr.columns)
+    if missing or len(tr) < 10_000:
+        print(f"WARNING: transfers look wrong (missing {missing or 'nothing'}, {len(tr):,} rows); "
+              "keeping any existing file.")
+        return None
+    out_path = DATA_DIR / "transfers.csv.gz"
+    tr.to_csv(out_path, index=False, compression="gzip")
+    newest = pd.to_datetime(tr["transfer_date"], errors="coerce")
+    newest = newest[newest <= pd.Timestamp.today()].max()
+    print(f"Saved {len(tr):,} transfers (latest completed {newest:%Y-%m-%d}) to {out_path}")
+    return out_path
+
+
 if __name__ == "__main__":
     fetch_valuation_history()      # first, so a stale-snapshot exit below does not skip it
+    fetch_transfers()
     fetch_real_valuations()

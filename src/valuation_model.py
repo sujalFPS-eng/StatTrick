@@ -437,6 +437,41 @@ def aggregate_players(ps: pd.DataFrame) -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------------------- Transfermarkt
+def confirm_moves_from_transfers(df: pd.DataFrame, transfers: pd.DataFrame) -> pd.DataFrame:
+    """Clear club mismatches that Transfermarkt's transfers file explains.
+
+    Transfermarkt's players table lags: after a window it can still list a player at the club he
+    left. Its transfers file is updated sooner, but it misses moves too (many new loans), so it is
+    not applied blindly. A mismatched player is only updated when one of his transfers since the
+    start of last season went to the club he is actually playing for (his FBref / Understat
+    squad). Then tm_club becomes that club and the flag is cleared. The snapshot's contract is
+    the old club's, so contract_years_left stays blank (the file does not say loan or permanent)."""
+    if "tm_player_id" not in df.columns:
+        return df
+    tr = transfers.copy()
+    tr["transfer_date"] = pd.to_datetime(tr["transfer_date"], errors="coerce")
+    since = pd.Timestamp(f"{current_season_start() - 1}-07-01")
+    tr = tr[(tr["transfer_date"] >= since) & (tr["transfer_date"] <= pd.Timestamp(today()))
+            & tr["to_club_name"].notna()]
+    by_player = {pid: g for pid, g in tr.groupby("player_id")}
+    df["tm_move_confirmed"] = 0
+    for idx in df.index[df["tm_club_mismatch"] == 1]:
+        pid = pd.to_numeric(df.at[idx, "tm_player_id"], errors="coerce")
+        moves = by_player.get(int(pid)) if pd.notna(pid) else None
+        if moves is None:
+            continue
+        hit = moves[[_club_ok([df.at[idx, "squad"]], c) for c in moves["to_club_name"]]]
+        if hit.empty:
+            continue
+        df.at[idx, "tm_club"] = hit.sort_values("transfer_date")["to_club_name"].iloc[-1]
+        df.at[idx, "tm_club_mismatch"] = 0
+        df.at[idx, "tm_move_confirmed"] = 1
+        df.at[idx, "contract_years_left"] = np.nan
+    print(f"  Transfermarkt transfers confirmed {int(df['tm_move_confirmed'].sum()):,} club moves "
+          "the players table had missed")
+    return df
+
+
 def _prep_tm(active_only: bool = True) -> pd.DataFrame:
     tm = pd.read_csv(DATA_DIR / "players.csv", low_memory=False)
     tm.columns = [c.strip().lower() for c in tm.columns]
@@ -729,6 +764,9 @@ def build_valuation_model():
     # Transfermarkt still lists a club he no longer plays for -> its value and contract describe
     # the pre-move player. Flag it and blank the contract rather than model the old deal.
     df["tm_club_mismatch"] = [int(not _club_ok([sq], tc)) for sq, tc in zip(df["squad"], df["tm_club"])]
+    tr_path = DATA_DIR / "transfers.csv.gz"
+    if tr_path.exists():
+        df = confirm_moves_from_transfers(df, pd.read_csv(tr_path, low_memory=False))
     df.loc[df["tm_club_mismatch"] == 1, "contract_years_left"] = np.nan
 
     df["pos_clean"] = df.apply(assign_role, axis=1)

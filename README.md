@@ -85,6 +85,11 @@ GitHub Actions maintains a live, weekly-updating scouting database.
   stop at 2024-25.
 * **Fail-loud ingestion:** each stage exits non-zero on a bad scrape or a broken
   Transfermarkt schema rather than silently committing a degraded file.
+* **Transfermarkt transfers:** the players snapshot lags behind each window, so a player whose
+  FBref/Understat club differs from it is checked against Transfermarkt's transfers file (also
+  downloaded weekly). If a transfer since the start of last season went to the club he plays
+  for, his club is corrected and the mismatch flag cleared (123 players on 2026-10-10, 431 → 308
+  flagged). Moves the file doesn't have, mostly new loans, stay flagged.
 * **Health gate:** the workflow reads `data/model_metrics.json` after retraining and refuses
   to commit if the database is too small or the out-of-fold R² drops below a floor.
 * **Weekly cadence:** ingest → retrain → rebuild club clusters → health gate → commit, every

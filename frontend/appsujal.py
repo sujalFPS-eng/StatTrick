@@ -1279,9 +1279,10 @@ with tab1:
         )
         notes = []
         if safe_float(target_row.get("tm_club_mismatch")) == 1:
-            notes.append(f"**Market value pre-dates his move.** Transfermarkt still lists him at "
-                         f"{target_row.get('tm_club', 'his previous club')}; the value shown and the missing "
-                         "contract length describe that spell, not his current one.")
+            notes.append(f"**Club differs from Transfermarkt.** Transfermarkt lists him at "
+                         f"{target_row.get('tm_club', 'another club')}, often the parent club while he is on loan. "
+                         "The market value may pre-date the move, and the contract length is left out because "
+                         "it may be that club's.")
         if str(target_row.get("match_method", "exact")) != "exact":
             notes.append(f"**Name matched approximately** to Transfermarkt's “{target_row.get('tm_match_name', '?')}” "
                          f"({target_row.get('match_method')}). Check it is the same person.")
@@ -2216,11 +2217,15 @@ and an appearance in one of the last two seasons to be included.
 - Progression and defensive stats stop at {_adv or "—"}; later seasons are judged on goals, assists, shots,
   minutes, xG and xA. xG comes from two providers with slightly different models, so small steps between
   {_adv or "—"} and the following season are not meaningful.
-- {_stale:,} players have changed club since their Transfermarkt record was last updated; their market value
-  and contract describe the previous club and are flagged on their page.
-- {_approx:,} players were matched to Transfermarkt by an approximate name match and are flagged.
-- Very old or very young players with exceptional market values have few comparables; the model tends to
-  price them low and says so on their page.
+- {_stale:,} players play for a club Transfermarkt doesn't list for them yet, even after checking its
+  transfers file (most are new loans). Their market value still applies, but the contract may be the parent
+  or previous club's, so it is left out and the player is flagged on his page.
+- {_approx:,} players were matched to Transfermarkt by a name variant ("Andy" for "Andrew", a shortened
+  surname) rather than an exact name. Every match also needs the same birth year and a club he has played
+  for, so these are very likely right; they are flagged so you can check.
+- The most expensive players in every age group are priced below their market value (roughly 25 to 50% for
+  the top tenth), because their price carries status and potential that the performance value leaves out on
+  purpose; under-20s also have few comparables. The status & contract premium shows part of the gap.
 - A model edge is a reason to look closer, not a valuation to transact on.
 - Clones include minutes per appearance but not tactical role, and per-90s partly reflect the team's style
   (possession is not adjusted for), so a clone from a very different side may play a different role.
