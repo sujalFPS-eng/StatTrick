@@ -35,7 +35,6 @@ from src.common import (
     name_key, season_start, season_weight, today, write_json,
 )
 from src.common import infer_live_season_start, read_json, season_label
-from src.database import replace_tables
 from src.market_forecast import build_market_forecast
 
 MIN_CAREER_MINUTES = 1500      # deduplicated minutes across all seasons
@@ -265,7 +264,10 @@ def aggregate_players(ps: pd.DataFrame) -> pd.DataFrame:
     ps = ps.copy()
     ps["w90"] = (ps["min"] / 90.0) * ps["season"].map(season_weight)
 
-    agg = {"min": ("min", "sum"), "n_seasons": ("season", "nunique"),
+    # eff_min = recency-weighted minutes: how much evidence the decayed per-90s rest on. The clone
+    # engine uses it to shrink small samples toward the position average.
+    ps["_eff_min"] = ps["w90"] * 90.0
+    agg = {"min": ("min", "sum"), "eff_min": ("_eff_min", "sum"), "n_seasons": ("season", "nunique"),
            "last_season_start": ("season_start", "max")}
     for c in PER90_COLS:
         valid = ps[c].notna()
@@ -803,6 +805,7 @@ def build_valuation_model():
     tables = {"players_master": out, "player_timeline": ps[ps["min"] >= 90][tl_cols]}
     if value_history is not None and len(value_history):
         tables["player_value_history"] = value_history
+    from src.database import replace_tables      # lazy: build_player_seasons works without a DB
     replace_tables(tables)
 
     write_json(DATA_DIR / "model_metrics.json", metrics)

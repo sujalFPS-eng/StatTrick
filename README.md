@@ -34,8 +34,15 @@ finds statistical clones for replacing outgoing talent or sourcing budget altern
   aerial rate, and so on).
 * Blends shape (cosine) with magnitude (distance), so a bit-part player with the right
   *ratios* but a fraction of the volume no longer reads as a near-perfect clone.
-* Every clone ships with a `Data Confidence` score: the share of the comparison that came
-  from real, observed stats rather than a position-median fill-in for missing advanced data.
+* Time-decayed per-90s (current season 1.0, then 0.85, 0.65, 0.45, 0.25, 0.10), shrunk toward
+  the position average by sample size (empirical Bayes, prior strength estimated per stat), so a
+  1,600-minute player can't look like a perfect clone by chance.
+* Every clone ships with a `Confidence` score (the share of the comparison that rests on
+  observed, well-sampled stats for both players) and a `Data Coverage` score (observed stats
+  only, ignoring sample size).
+* `python src/validate_clones.py` checks the clones out of sample: it builds each player's
+  profile from earlier seasons and asks whether his own latest season is among its closest
+  matches, with and without shrinkage. `pytest` runs the engine's unit tests.
 
 ### 3. System Fit & Tactical Portability
 Evaluates how a target's profile translates to an acquiring club's tactical identity.

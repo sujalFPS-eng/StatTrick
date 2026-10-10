@@ -1312,7 +1312,13 @@ with tab1:
 
     with sub_style:
         section_heading("Statistical clones", "Closest tactical output to your target")
-        st.info("**What is a clone?** A player who shares a highly similar statistical profile and on-pitch playstyle to your target. Calculated via cosine similarity across multi-season tactical metrics.")
+        st.info("**What is a clone?** A player whose statistical profile is closest to your target's. "
+                "Each player is 15 per-90 stats over up to six seasons, with recent seasons weighted more. "
+                "Small samples are pulled toward their position's average, so a player with few minutes "
+                "can't look like a perfect match by chance. The score blends the shape of the profile "
+                "(cosine similarity) with its level (distance), using stat weights for the target's position. "
+                "**Confidence** is how much of the comparison rests on real, well-sampled data for both players; "
+                "**Data Coverage** counts only which stats were recorded.")
 
         # over-fetch, then keep the closest matches that are still recruitable
         results = engine.find_similar_players(target, top_n=top_k * 12 if active_only else top_k, same_position=filter_pos)
@@ -1334,7 +1340,7 @@ with tab1:
         
             clone_col_config = {}
             for c in display_results.columns:
-                if "similar" in str(c).lower() or "score" in str(c).lower() or "confidence" in str(c).lower():
+                if any(k in str(c).lower() for k in ("similar", "score", "confidence", "coverage")):
                     # Values arrive as "95.5%" display strings, which ProgressColumn cannot draw a
                     # bar from directly. The original code tried pd.to_numeric() on the raw string,
                     # got NaN because of the trailing '%', and silently skipped the bar for every

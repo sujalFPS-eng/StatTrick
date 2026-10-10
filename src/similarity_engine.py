@@ -13,6 +13,16 @@ Fixes vs. the original (#9 in the audit):
     the right shot/goal *ratios* but 1/3 the volume no longer reads as a 98% clone.
   - Per-position feature weights (the README's claim, now actually implemented): passing
     metrics matter more for a fullback's clone than his aerial win rate, etc.
+
+Sample size (Oct 2026):
+  - The per-90s are already time-decayed (season weights in src/common.py), but a profile built on
+    1,600 minutes used to count as much as one built on 9,000. Each per-90 is now shrunk toward the
+    player's position-group average in proportion to how little evidence it rests on
+    (empirical Bayes): shrunk = (n * rate + k * group_rate) / (n + k), with n = recency-weighted
+    90s and k estimated per stat from the data (method of moments, Poisson noise).
+  - "Confidence" now combines data coverage with sample size: the position-weighted share of the
+    profile that is both observed AND reliable (n / (n + k)) for both players. The old
+    coverage-only number is still returned as "Data Coverage".
 """
 from __future__ import annotations
 
@@ -27,7 +37,6 @@ from sklearn.metrics.pairwise import cosine_similarity
 
 # Place your new imports DOWN HERE, after the future annotations and standard library imports
 from src.common import DATA_DIR, POS_GROUP
-from src.database import read_table
 
 # Per-position feature emphasis. Any per90 column not listed gets WEIGHT_DEFAULT.
 # Keys are matched by substring against the column name so both 'xg_per90' and any
@@ -45,6 +54,60 @@ POSITION_WEIGHTS: dict[str, dict[str, float]] = {
 WEIGHT_DEFAULT = 0.7
 MAGNITUDE_BLEND = 0.35   # 0 = pure cosine (shape only), 1 = pure distance (magnitude only)
 
+# Stats from the full event feed (FBref/Opta), which stops before the other stats do. Their
+# evidence is the recency-weighted 90s times adv_minutes_share, not the whole career.
+EVENT_FEED_STATS = {"prgc", "prgp", "tkl", "int", "clr", "blk", "aer_won", "psxg_net"}
+# Not counts, so Poisson noise does not apply and k cannot be estimated from the data.
+NON_COUNT_STATS = {"psxg_net"}
+K_FALLBACK_90S = 10.0             # prior strength in 90s when k cannot be estimated (= 900 minutes)
+K_BOUNDS_90S = (1.0, 60.0)
+
+
+def estimate_prior_strength(rate: pd.Series, n90: pd.Series, group: pd.Series) -> float:
+    """Empirical-Bayes prior strength k (in 90s) for one per-90 stat.
+
+    Across players, var(observed rate) = var(true rate) + E[sampling noise]. For a count stat the
+    noise of a per-90 built on n 90s is about group_rate / n (Poisson). The true spread tau^2 is
+    what is left, and k = group_rate / tau^2 is how many 90s of a player's own data it takes before
+    his rate counts as much as his position's average. Stats with a lot of real spread between
+    players get a small k; noisy, low-signal stats get a large one."""
+    ok = rate.notna() & (n90 > 0)
+    if ok.sum() < 30:
+        return K_FALLBACK_90S
+    r, n, g = rate[ok], n90[ok], group[ok]
+    group_rate = (r * n).groupby(g).transform("sum") / n.groupby(g).transform("sum")
+    noise = group_rate.clip(lower=0) / n
+    tau2 = float(((r - group_rate) ** 2 - noise).mean())
+    mean_rate = float(group_rate.mean())
+    if mean_rate <= 0:
+        return K_FALLBACK_90S
+    if not np.isfinite(tau2) or tau2 <= 0:
+        return K_BOUNDS_90S[1]                     # the spread is all noise: lean on the group
+    return float(np.clip(mean_rate / tau2, *K_BOUNDS_90S))
+
+
+def shrink_rates(raw: pd.DataFrame, n90: pd.DataFrame, group: pd.Series) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
+    """Shrink every observed per-90 toward its position-group average by sample size.
+    Returns (shrunk rates, reliability n / (n + k) per cell, k per column). NaN stays NaN."""
+    shrunk = raw.copy()
+    reliability = pd.DataFrame(np.nan, index=raw.index, columns=raw.columns)
+    ks = {}
+    for col in raw.columns:
+        stat = col.replace("_per90", "")
+        rate, n = raw[col], n90[col]
+        k = K_FALLBACK_90S if stat in NON_COUNT_STATS else estimate_prior_strength(rate, n, group)
+        ks[col] = k
+        ok = rate.notna() & (n > 0)
+        if not ok.any():
+            continue
+        num = (rate.where(ok, 0.0) * n.where(ok, 0.0)).groupby(group).transform("sum")
+        den = n.where(ok, 0.0).groupby(group).transform("sum")
+        global_rate = float((rate[ok] * n[ok]).sum() / n[ok].sum())
+        group_rate = (num / den.replace(0, np.nan)).fillna(global_rate)
+        shrunk[col] = np.where(ok, (n * rate + k * group_rate) / (n + k), np.nan)
+        reliability[col] = np.where(ok, n / (n + k), np.nan)
+    return shrunk, reliability, ks
+
 
 def _weight_vector(pos: str, feature_cols: list[str]) -> np.ndarray:
     table = POSITION_WEIGHTS.get(str(pos).upper(), {})
@@ -59,21 +122,43 @@ def _weight_vector(pos: str, feature_cols: list[str]) -> np.ndarray:
 
 
 class PlayerSimilarityEngine:
-    def __init__(self, data_path=None):
-        self.df = read_table("players_master")
+    def __init__(self, data_path=None, df: pd.DataFrame | None = None, shrink: bool = True):
+        if df is None:
+            from src.database import read_table          # lazy, so tests and validation can pass a frame
+            df = read_table("players_master")
+        self.df = df.copy()
         self.df.columns = [c.lower() for c in self.df.columns]
         self.df = self.df.dropna(subset=["player"]).drop_duplicates(subset=["player"]).reset_index(drop=True)
 
         self.feature_cols = [c for c in self.df.columns if c.endswith("per90")]
         self.raw = self.df[self.feature_cols].apply(pd.to_numeric, errors="coerce")
         self.observed = self.raw.notna().to_numpy()                       # True = real data, not imputed
+        pos = self.df["pos_clean"] if "pos_clean" in self.df.columns else pd.Series("", index=self.df.index)
+        pos = pos.fillna("").astype(str)
+
+        # Evidence behind each per-90, in recency-weighted 90s. eff_min is written by the pipeline;
+        # older tables only have career minutes, which overstate the evidence a little (no decay).
+        mins_col = "eff_min" if "eff_min" in self.df.columns else "min"
+        has_minutes = mins_col in self.df.columns
+        n90_all = (pd.to_numeric(self.df[mins_col], errors="coerce").fillna(0.0) / 90.0 if has_minutes
+                   else pd.Series(0.0, index=self.df.index))
+        adv_share = (pd.to_numeric(self.df["adv_minutes_share"], errors="coerce").fillna(1.0).clip(0, 1)
+                     if "adv_minutes_share" in self.df.columns else pd.Series(1.0, index=self.df.index))
+        self.n90 = pd.DataFrame({c: n90_all * adv_share if c.replace("_per90", "") in EVENT_FEED_STATS else n90_all
+                                 for c in self.feature_cols})
+
+        if shrink and has_minutes:
+            self.rates, rel, self.prior_strength = shrink_rates(self.raw, self.n90, pos)
+            self.reliability = rel.fillna(0.0).to_numpy()
+        else:                                             # no minutes to judge sample size by
+            self.rates, self.prior_strength = self.raw, {}
+            self.reliability = self.observed.astype(float)
 
         # Impute by POSITION-GROUP median (falls back to global median for tiny/empty groups),
         # so a data-less player reads as "roughly average for his position", not "does nothing".
-        pos = self.df["pos_clean"] if "pos_clean" in self.df.columns else pd.Series("", index=self.df.index)
-        group_median = self.raw.groupby(pos).transform("median")
-        global_median = self.raw.median()
-        filled = self.raw.fillna(group_median).fillna(global_median).fillna(0.0)
+        group_median = self.rates.groupby(pos).transform("median")
+        global_median = self.rates.median()
+        filled = self.rates.fillna(group_median).fillna(global_median).fillna(0.0)
 
         mu, sigma = filled.mean(), filled.std().replace(0, 1.0)
         self.Z = ((filled - mu) / sigma).to_numpy(dtype="float32")
@@ -83,9 +168,11 @@ class PlayerSimilarityEngine:
     def _row(self, player: str) -> int | None:
         return self._name_to_row.get(player)
 
-    def _scored(self, i: int) -> tuple[np.ndarray, np.ndarray]:
-        """Position-weighted similarity of row i against every other row, plus per-pair
-        data confidence (share of the weighted feature mass that was OBSERVED for both)."""
+    def _scored(self, i: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Position-weighted similarity of row i against every other row, plus per pair:
+        coverage   - share of the weighted feature mass that was OBSERVED for both players
+        confidence - the same share, discounted by how reliable (sample size) each stat is for
+                     both players: sum(w * sqrt(rel_i * rel_j)) / sum(w)."""
         pos = self.df.at[i, "pos_clean"] if "pos_clean" in self.df.columns else ""
         w = _weight_vector(pos, self.feature_cols)
         sw = np.sqrt(w)
@@ -103,8 +190,9 @@ class PlayerSimilarityEngine:
         score = (1 - MAGNITUDE_BLEND) * ((cosine + 1) / 2) + MAGNITUDE_BLEND * dist_sim
 
         obs_i = self.observed[i].astype(float)
-        confidence = (self.observed.astype(float) * obs_i * w).sum(axis=1) / max(w.sum(), 1e-6)
-        return score, confidence
+        coverage = (self.observed.astype(float) * obs_i * w).sum(axis=1) / max(w.sum(), 1e-6)
+        confidence = (np.sqrt(self.reliability * self.reliability[i]) * w).sum(axis=1) / max(w.sum(), 1e-6)
+        return score, coverage, confidence
 
     def explain(self, target_player: str, other_player: str, n: int = 3) -> dict | None:
         """Why are these two similar, and where do they differ? Uses only stats that were actually
@@ -133,7 +221,7 @@ class PlayerSimilarityEngine:
         if i is None:
             return None
 
-        score, confidence = self._scored(i)
+        score, coverage, confidence = self._scored(i)
         score[i] = -np.inf
 
         mask = np.ones(len(self.df), dtype=bool)
@@ -144,7 +232,8 @@ class PlayerSimilarityEngine:
         cols = [c for c in ["player", "squad", "pos_clean", "age_clean"] if c in self.df.columns]
         out = self.df.loc[order, cols].copy()
         out["Similarity Score"] = [f"{score[j] * 100:.1f}%" for j in order]
-        out["Data Confidence"] = [f"{confidence[j] * 100:.0f}%" for j in order]
+        out["Confidence"] = [f"{confidence[j] * 100:.0f}%" for j in order]
+        out["Data Coverage"] = [f"{coverage[j] * 100:.0f}%" for j in order]
         out.rename(columns={"player": "Player", "squad": "Club", "pos_clean": "Position",
                             "age_clean": "Age"}, inplace=True)
         return out.reset_index(drop=True)
