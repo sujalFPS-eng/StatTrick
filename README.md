@@ -28,26 +28,38 @@ contract length.
   against a 70% nominal target. See `data/model_metrics.json` after any run.
 
 ### 2. Tactical Similarity & Cloning Index
-An on-demand similarity engine (no precomputed N×N matrix) that
-finds statistical clones for replacing outgoing talent or sourcing budget alternatives.
-* Per-position feature weighting (passing matters more for a fullback's clone than his
-  aerial rate, and so on).
-* Blends shape (cosine) with magnitude (distance), so a bit-part player with the right
-  *ratios* but a fraction of the volume no longer reads as a near-perfect clone.
-* Time-decayed per-90s (current season 1.0, then 0.85, 0.65, 0.45, 0.25, 0.10), shrunk toward
-  the position average by sample size (empirical Bayes, prior strength estimated per stat), so a
-  1,600-minute player can't look like a perfect clone by chance.
-* Every clone ships with a `Confidence` score (the share of the comparison that rests on
-  observed, well-sampled stats for both players) and a `Data Coverage` score (observed stats
-  only, ignoring sample size).
-* `python src/validate_clones.py` checks the clones out of sample: it builds each player's
-  profile from earlier seasons and asks whether his own holdout season is among its closest
-  matches, with and without shrinkage, and saves the result to `data/clone_validation.json`
-  (shown in the app's Methodology tab). On the 2024-25 holdout (982 players), his own season
-  ranks first for 12.1% of players with shrinkage vs 6.8% without, and the median rank
-  improves from 35 to 20. `pytest` runs the engine's unit tests.
-* Known limits: starts and share of minutes are not inputs, and per-90s partly reflect team
-  style, so clones match output profiles rather than roles.
+An on-demand similarity engine (no precomputed N×N matrix) that finds statistical clones for
+replacing outgoing talent or sourcing budget alternatives.
+* **Profile:** 15 time-decayed per-90s (current season 1.0, then 0.85, 0.65, 0.45, 0.25, 0.10)
+  plus one role stat, recency-weighted minutes per appearance, so an impact sub and an everyday
+  starter with similar per-90s are less likely to be clones.
+* **Minutes shrinkage:** each per-90 is pulled toward the position average by sample size
+  (empirical Bayes, prior strength estimated per stat from Poisson noise), so a 1,600-minute
+  player can't look like a perfect clone by chance.
+* **Score:** 80% profile shape (cosine) and 20% level (distance), with position weights at half
+  strength (passing matters more for a fullback's clone than his aerial rate, and so on) and a
+  light role weight.
+* **Per-clone scores:** `Confidence` (share of the comparison resting on observed, well-sampled
+  stats for both players), `Data Coverage` (observed stats only) and `Stability` (how often the
+  clone stays in the target's top 10 across 40 resamples, each nudging every profile by about as
+  much as its sample size allows).
+* **Validation:** `python src/validate_clones.py` builds each player's profile from earlier
+  seasons and checks whether his own test season (2024-25, 982 players) is among its closest
+  matches; results go to `data/clone_validation.json` and the app's Methodology tab.
+
+  | Engine | Own season ranked 1st | In top 10 | Median rank |
+  |---|---|---|---|
+  | Before Oct 2026 | 6.8% | 27.8% | 35 |
+  | + minutes shrinkage | 12.1% | 36.8% | 20 |
+  | Current settings | 12.5% | 40.4% | 17 |
+
+* **Tuning:** `python src/validate_clones.py --tune` grid-searches the shape/level blend, position
+  emphasis and role weight (96 combinations) on 2023-24 and reports them on 2024-25. The search
+  alone would drop position weighting and the role stat (best: 13.3% / 40.0% / 17); the current
+  settings keep half the position emphasis and a light role weight on purpose, because a scout
+  wants someone who does the same job, not just the most identifiable statistical twin.
+* **Known limits:** tactical role and team style are not modelled (per-90s are not
+  possession-adjusted), so a clone from a very different side may play a different role.
 
 ### 3. System Fit & Tactical Portability
 Evaluates how a target's profile translates to an acquiring club's tactical identity.
@@ -77,6 +89,10 @@ GitHub Actions maintains a live, weekly-updating scouting database.
   to commit if the database is too small or the out-of-fold R² drops below a floor.
 * **Weekly cadence:** ingest → retrain → rebuild club clusters → health gate → commit, every
   Monday 04:00 UTC.
+* **Tests:** `.github/workflows/tests.yml` runs `pytest` on every pull request and push to main
+  (synthetic data, no database or network needed).
+* **No possession adjustment:** the old "PAdj" step only rescaled columns the pipeline throws
+  away, so it was removed rather than presented as adjusted data.
 
 ## Technical Stack
 * **Machine Learning:** `xgboost`, `scikit-learn`, `numpy`, `pandas`
@@ -87,7 +103,8 @@ GitHub Actions maintains a live, weekly-updating scouting database.
 ## Project Structure
 ```text
 ├── .github/workflows/
-│   └── mlops_pipeline.yml          # ingest -> retrain -> cluster -> health gate -> commit
+│   ├── mlops_pipeline.yml          # ingest -> retrain -> cluster -> health gate -> commit
+│   └── tests.yml                   # pytest on every pull request
 ├── data/
 │   ├── master_scouting_db.csv      # one row per qualified player, OOF-scored
 │   ├── player_timeline_db.csv      # deduplicated per-season data, NaNs intact
@@ -105,11 +122,12 @@ GitHub Actions maintains a live, weekly-updating scouting database.
 │   ├── ingest_valuations.py        # Transfermarkt snapshot -> data/players.csv
 │   ├── valuation_model.py          # dedup, aggregate, TM match, OOF XGBoost
 │   ├── market_forecast.py          # 12-month market value forecast
-│   ├── similarity_engine.py        # position-weighted, sample-size-shrunk clone engine
-│   ├── validate_clones.py          # out-of-sample check of the clone engine
+│   ├── similarity_engine.py        # clone engine: shrinkage, role volume, stability
+│   ├── validate_clones.py          # out-of-sample check and tuning of the clone engine
 │   └── system_fit.py               # position-grouped club clustering & fit scoring
 ├── tests/
-│   └── test_similarity_engine.py   # pytest, synthetic data, no database needed
+│   ├── test_similarity_engine.py   # clone engine (pytest, synthetic data, no database)
+│   └── test_understat_refresh.py   # Understat fallback for stale FBref rows
 ├── frontend/
 │   └── appsujal.py                 # Streamlit UI
 ├── requirements.txt

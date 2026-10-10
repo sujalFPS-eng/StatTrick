@@ -66,6 +66,7 @@ METRIC_LABELS = {
     "aer_won_per90": "Aerials Won / 90",
     "saves_per90": "Saves / 90",
     "psxg_net_per90": "PSxG Net / 90",
+    "min_per_app": "Minutes per Appearance",
     "min": "Career Minutes",
     "actual_value_m": "Market Value (€M)",
     "predicted_value_m": "Performance Value (€M)",
@@ -1312,13 +1313,13 @@ with tab1:
 
     with sub_style:
         section_heading("Statistical clones", "Closest tactical output to your target")
-        st.info("**What is a clone?** A player whose statistical profile is closest to your target's. "
-                "Each player is 15 per-90 stats over up to six seasons, with recent seasons weighted more. "
-                "Small samples are pulled toward their position's average, so a player with few minutes "
-                "can't look like a perfect match by chance. The score blends the shape of the profile "
-                "(cosine similarity) with its level (distance), using stat weights for the target's position. "
+        st.info("**What is a clone?** A player whose statistical profile is closest to your target's: 15 per-90 "
+                "stats over up to six seasons (recent seasons count more) plus minutes per appearance, so a starter "
+                "isn't matched with an impact sub. Small samples are pulled toward their position's average, so a "
+                "player with few minutes can't look like a perfect match by chance. "
                 "**Confidence** is how much of the comparison rests on real, well-sampled data for both players; "
-                "**Data Coverage** counts only which stats were recorded.")
+                "**Data Coverage** counts only which stats were recorded; **Stability** is how often the clone stays "
+                "in the top 10 when the data is resampled. Full method in the Methodology tab.")
 
         # over-fetch, then keep the closest matches that are still recruitable
         results = engine.find_similar_players(target, top_n=top_k * 12 if active_only else top_k, same_position=filter_pos)
@@ -1340,7 +1341,7 @@ with tab1:
         
             clone_col_config = {}
             for c in display_results.columns:
-                if any(k in str(c).lower() for k in ("similar", "score", "confidence", "coverage")):
+                if any(k in str(c).lower() for k in ("similar", "score", "confidence", "coverage", "stability")):
                     # Values arrive as "95.5%" display strings, which ProgressColumn cannot draw a
                     # bar from directly. The original code tried pd.to_numeric() on the raw string,
                     # got NaN because of the trailing '%', and silently skipped the bar for every
@@ -2101,24 +2102,42 @@ with tab5:
         _fc_text = "Not available in this build (the dated valuation history has not been downloaded)."
 
     _cv = read_json(DATA_DIR / "clone_validation.json", default={}) or {}
+    _set = _cv.get("settings", {})
+    _blend = float(_set.get("blend", 0.2))
     _clone_text = (
-        "Each player is 15 per-90 stats. Seasons are weighted 1.0 for the current one, then 0.85, 0.65, 0.45, "
+        "Each player is 15 per-90 stats plus one role stat, minutes per appearance (an everyday starter plays "
+        "about 85, an impact sub about 25). Seasons are weighted 1.0 for the current one, then 0.85, 0.65, 0.45, "
         "0.25 and 0.10, and each per-90 is weighted by minutes as well. A rate built on few minutes is then pulled "
         "toward the position's average, more strongly the fewer minutes behind it. How strongly is estimated "
         "separately for each stat from how much players really differ on it (goals need far more minutes to "
         "trust than progressive passes). Stats are standardised and weighted for the target's position. The score "
-        "is 65% profile shape (cosine similarity) and 35% level (distance), so a player with the right mix of "
-        "actions but a fraction of the output is not a near-perfect clone. Missing stats are filled with the "
-        "position average and lower the Confidence and Data Coverage scores.")
-    _w, _wo = _cv.get("with_shrinkage"), _cv.get("without_shrinkage")
-    if _w and _wo:
+        f"is {1 - _blend:.0%} profile shape (cosine similarity) and {_blend:.0%} level (distance), so a player with "
+        "the right mix of actions but a fraction of the output is not a near-perfect clone. Missing stats are "
+        "filled with the position average and lower the Confidence and Data Coverage scores.\n\n"
+        "**Stability** reruns the search 40 times, each time nudging every profile by about as much as its "
+        "sample size allows, and counts how often the clone stays in the target's top 10. Distinctive players "
+        "(a Haaland) have stable clone lists; players in a crowded, average profile do not, and a low number "
+        "means the clones are close to interchangeable.")
+    _vars = _cv.get("variants", {})
+    _orig, _now = _vars.get("original"), _vars.get("current settings")
+    if _orig and _now:
         _clone_text += (
-            f"\n\nOut-of-sample check ({_cv.get('players', 0):,} players, holdout {_cv.get('holdout')}): each player's "
-            f"profile from earlier seasons was matched against everyone's {_cv.get('holdout')} profile. His own season "
-            f"came out as the closest match for {_w['top1']:.0%} of players and in the top 10 for {_w['top10']:.0%} "
-            f"(median rank {_w['median_rank']:.0f}); without the minutes adjustment it was {_wo['top1']:.0%}, "
-            f"{_wo['top10']:.0%} and {_wo['median_rank']:.0f}. Picking at random would put him in the top 10 about "
-            f"{10 / max(_cv.get('players', 1), 1):.0%} of the time.")
+            f"\n\n**Out-of-sample check** ({_cv.get('players', 0):,} players, test season {_cv.get('holdout')}): each "
+            f"player's profile from earlier seasons was matched against everyone's {_cv.get('holdout')} profile, "
+            f"and the right answer is his own season. It came out as the closest match for {_now['top1']:.0%} of "
+            f"players and in the top 10 for {_now['top10']:.0%} (median rank {_now['median_rank']:.0f}). The engine "
+            f"before October 2026, with no minutes adjustment or tuning, managed {_orig['top1']:.0%}, "
+            f"{_orig['top10']:.0%} and {_orig['median_rank']:.0f}. Picking at random would put him in the top 10 "
+            f"about {10 / max(_cv.get('players', 1), 1):.0%} of the time.")
+    _tun = _cv.get("tuning")
+    if _tun:
+        _clone_text += (
+            f"\n\nThe shape/level split, how strongly position weights apply and the weight of the role stat were "
+            f"chosen by a grid search ({_tun.get('grid_size')} combinations) on {_tun.get('season')}, a season the "
+            f"check above never uses. That search alone would drop position weighting and the role stat, because "
+            f"they make a player slightly harder to tell apart from similar ones. Half the position weighting and a "
+            f"light role weight are kept on purpose, since a scout wants someone who does the same job, at a cost "
+            f"of under one point of accuracy.")
 
     render_metrics_html([
         ("Players", f"{_n:,}", f"{_active:,} with minutes in {_cur}", "neutral"),
@@ -2180,7 +2199,8 @@ and an appearance in one of the last two seasons to be included.
   Recent seasons count more, and players with few minutes are pulled toward their position's average.
   See "How clones are built" below.
 - **Confidence** (clones) is how much of the comparison rests on recorded, well-sampled stats for both players.
-  **Data Coverage** counts only which stats were recorded, ignoring sample size.
+  **Data Coverage** counts only which stats were recorded, ignoring sample size. **Stability** is how often
+  the clone stays in the top 10 when the data is resampled.
 - **Fit index** compares a player to the target club's profile for his position group. 50 means no relationship.
 
 **How clones are built**
@@ -2202,8 +2222,8 @@ and an appearance in one of the last two seasons to be included.
 - Very old or very young players with exceptional market values have few comparables; the model tends to
   price them low and says so on their page.
 - A model edge is a reason to look closer, not a valuation to transact on.
-- Clones compare rates, not role: starts and share of minutes are not inputs, and per-90s partly reflect
-  the team's style, so a clone from a very different side may play a different role.
+- Clones include minutes per appearance but not tactical role, and per-90s partly reflect the team's style
+  (possession is not adjusted for), so a clone from a very different side may play a different role.
 """)
 
 # --- Application Footer ---
@@ -2221,4 +2241,4 @@ st.markdown(
     </div>
     """,
     unsafe_allow_html=True
-)
+)

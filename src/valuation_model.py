@@ -48,14 +48,15 @@ RAW_STATS = ["gls", "ast", "xg", "xag", "sh", "sot", "prgc", "prgp",
              "tkl", "int", "clr", "blk", "aer_won", "saves", "psxg_net"]
 PER90_COLS = [f"{s}_per90" for s in RAW_STATS]
 ADVANCED = ["xg", "xag", "prgc", "prgp"]
-ID_COLS = ["player", "born", "pos", "squad", "league", "age", "min"]
+ID_COLS = ["player", "born", "pos", "squad", "league", "age", "min", "mp"]   # mp = appearances
 # Understat season totals that stand in for stale FBref rows (our column -> Understat column)
-UNDERSTAT_TOTALS = {"gls": "goals", "ast": "assists", "sh": "shots", "xg": "xG", "xag": "xA"}
+UNDERSTAT_TOTALS = {"gls": "goals", "ast": "assists", "sh": "shots", "xg": "xG", "xag": "xA", "mp": "games"}
 
 # ---------------------------------------------------------------------------- sources
 # Column maps are applied AFTER lower-casing + stripping. One explicit map per source.
 CLEANED_MAP = {
     "avg mins per match": "min",        # despite the name this column holds TOTAL minutes
+    "matches played": "mp",
     "goals": "gls", "assists": "ast", "expected goals": "xg",
     "progressive carries": "prgc", "progressive passes": "prgp",
     "total shots": "sh", "tackles attempted": "tkl", "interceptions": "int",
@@ -222,7 +223,9 @@ def refresh_from_understat(df: pd.DataFrame, files: list[Path] | None = None) ->
     Players who changed club mid-season (several FBref rows) are left as FBref has them.
     Where each row's minutes came from is recorded in `min_src`."""
     df["min_src"] = "fbref"
-    df[["min"] + RAW_STATS] = df[["min"] + RAW_STATS].astype(float)      # scaled totals are fractional
+    if "mp" not in df.columns:
+        df["mp"] = np.nan
+    df[["min", "mp"] + RAW_STATS] = df[["min", "mp"] + RAW_STATS].astype(float)      # scaled totals are fractional
     files = _understat_files() if files is None else files
     cur = current_season_start()
     refreshed = added = 0
@@ -247,7 +250,7 @@ def refresh_from_understat(df: pd.DataFrame, files: list[Path] | None = None) ->
                 if pd.notna(df.at[r, c]):
                     df.at[r, c] = df.at[r, c] * ut / old
             for col, ucol in UNDERSTAT_TOTALS.items():
-                if pd.notna(u.at[hit, ucol]):
+                if ucol in u.columns and pd.notna(u.at[hit, ucol]):
                     df.at[r, col] = float(u.at[hit, ucol])
             df.at[r, "min"], df.at[r, "min_src"] = ut, "understat"
             refreshed += 1
@@ -276,7 +279,7 @@ def refresh_from_understat(df: pd.DataFrame, files: list[Path] | None = None) ->
                         "league": canon_league(u.at[i, "league"]) if "league" in u.columns else prev["league"],
                         "season": season, "src": "understat", "rank": 3, "min": float(u.at[i, "time"]),
                         "min_src": "understat"})
-            row.update({col: float(u.at[i, ucol]) for col, ucol in UNDERSTAT_TOTALS.items()})
+            row.update({col: float(u.at[i, ucol]) for col, ucol in UNDERSTAT_TOTALS.items() if ucol in u.columns})
             new_rows.append(row)
         if new_rows:
             df = pd.concat([df, pd.DataFrame(new_rows, columns=df.columns)], ignore_index=True)
@@ -334,6 +337,7 @@ def build_player_seasons() -> pd.DataFrame:
     df["league"] = df["league"].map(canon_league)
     df["squad"] = df["squad"].map(canon_club)
     df["min"] = _num(df["min"])
+    df["mp"] = _num(df["mp"])
     df["born"] = pd.to_numeric(df["born"], errors="coerce")
     df["age"] = df["age"].astype(str).str.split("-").str[0]
     df["age"] = pd.to_numeric(df["age"], errors="coerce")
@@ -386,6 +390,13 @@ def aggregate_players(ps: pd.DataFrame) -> pd.DataFrame:
     agg["adv_last_season_start"] = ("_adv_season", "max")
     # how much of the career the tracking data actually covers (xG as the marker stat)
     # (progressive passes mark the full event feed; xG alone can now come from Understat)
+    # role volume: recency-weighted minutes per appearance (everyday starter ~85, impact sub ~25)
+    has_mp = ps["mp"].notna() & (ps["mp"] > 0)
+    ps["_w"] = ps["season"].map(season_weight)
+    ps["_mpa_num"] = np.where(has_mp, ps["_w"] * ps["min"], 0.0)
+    ps["_mpa_den"] = np.where(has_mp, ps["_w"] * ps["mp"], 0.0)
+    agg["_mpa_num"] = ("_mpa_num", "sum")
+    agg["_mpa_den"] = ("_mpa_den", "sum")
     ps["_xg_min"] = np.where(ps["prgp_per90"].notna(), ps["min"], 0.0)
     ps["_xg_season"] = np.where(ps["xg_per90"].notna(), ps["season_start"], np.nan)
     agg["xg_last_season_start"] = ("_xg_season", "max")
@@ -396,6 +407,8 @@ def aggregate_players(ps: pd.DataFrame) -> pd.DataFrame:
         den = out.pop(f"{c}__den")
         num = out.pop(f"{c}__num")
         out[c] = np.where(den > 0, num / den.replace(0, np.nan), np.nan)   # NaN, not 0
+    mpa_den = out.pop("_mpa_den")
+    out["min_per_app"] = (out.pop("_mpa_num") / mpa_den.where(mpa_den > 0)).clip(upper=90.0)
     out["has_advanced"] = out[[f"{a}_per90" for a in ADVANCED]].notna().all(axis=1).astype(int)
     out["adv_minutes_share"] = (out.pop("_xg_min") / out["min"]).round(3)
     out["adv_seasons_ago"] = current_season_start() - out["adv_last_season_start"]      # NaN = never

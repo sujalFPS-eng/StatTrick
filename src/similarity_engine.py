@@ -23,6 +23,9 @@ Sample size (Oct 2026):
   - "Confidence" now combines data coverage with sample size: the position-weighted share of the
     profile that is both observed AND reliable (n / (n + k)) for both players. The old
     coverage-only number is still returned as "Data Coverage".
+  - Role volume (minutes per appearance) is a feature, a "Stability" score resamples every profile
+    by its sample-size noise and counts how often a clone stays in the top 10, and the blend /
+    position emphasis / role weight were tuned out of sample (see the constants below).
 """
 from __future__ import annotations
 
@@ -52,13 +55,26 @@ POSITION_WEIGHTS: dict[str, dict[str, float]] = {
     "ST":       {"xg": 2.5, "gls": 2.0, "sh": 1.8, "aer_won": 1.2, "sot": 1.2, "prgp": 0.3},
 }
 WEIGHT_DEFAULT = 0.7
-MAGNITUDE_BLEND = 0.35   # 0 = pure cosine (shape only), 1 = pure distance (magnitude only)
+# The three settings below were chosen with src/validate_clones.py --tune: grid search on the
+# 2023-24 season, checked on 2024-25 (which the search never saw). Self-retrieval is best with no
+# position emphasis and no role term at all (blend 0.2: test MRR 0.222, top-10 40.0%), because
+# role and position weighting trade "is this the same player?" for "does he do this job?". The
+# values used keep half the position emphasis and a light role term for that scouting intent at
+# a small cost (test MRR 0.216, top-10 40.4%; the pre-Oct-2026 engine scored 0.139 and 27.8%).
+MAGNITUDE_BLEND = 0.20   # 0 = pure cosine (shape only), 1 = pure distance (magnitude only)
+POSITION_EMPHASIS = 0.5  # 0 = every stat weighted the same, 1 = POSITION_WEIGHTS as written
+# Role volume: recency-weighted minutes per appearance (aggregate_players), so an impact sub and
+# an everyday starter with similar per-90s are less likely to be clones. Not position-specific.
+ROLE_COLS = ["min_per_app"]
+ROLE_WEIGHT = 0.25
+STABILITY_DRAWS = 40
+STABILITY_TOP = 10       # stability = share of resamples in which a clone stays in the target's top 10
 
 # Stats from the full event feed (FBref/Opta), which stops before the other stats do. Their
 # evidence is the recency-weighted 90s times adv_minutes_share, not the whole career.
 EVENT_FEED_STATS = {"prgc", "prgp", "tkl", "int", "clr", "blk", "aer_won", "psxg_net"}
 # Not counts, so Poisson noise does not apply and k cannot be estimated from the data.
-NON_COUNT_STATS = {"psxg_net"}
+NON_COUNT_STATS = {"psxg_net", "min_per_app"}
 K_FALLBACK_90S = 10.0             # prior strength in 90s when k cannot be estimated (= 900 minutes)
 K_BOUNDS_90S = (1.0, 60.0)
 
@@ -109,7 +125,10 @@ def shrink_rates(raw: pd.DataFrame, n90: pd.DataFrame, group: pd.Series) -> tupl
     return shrunk, reliability, ks
 
 
-def _weight_vector(pos: str, feature_cols: list[str]) -> np.ndarray:
+def _weight_vector(pos: str, feature_cols: list[str], emphasis: float = POSITION_EMPHASIS,
+                   role_weight: float = ROLE_WEIGHT) -> np.ndarray:
+    """Per-feature weights for a target at `pos`. emphasis scales how far the position table moves
+    weights away from 1 (w = 1 + emphasis * (table - 1)); role columns get role_weight."""
     table = POSITION_WEIGHTS.get(str(pos).upper(), {})
     w = np.full(len(feature_cols), WEIGHT_DEFAULT)
     for i, col in enumerate(feature_cols):
@@ -118,11 +137,18 @@ def _weight_vector(pos: str, feature_cols: list[str]) -> np.ndarray:
             if stat == key:
                 w[i] = val
                 break
+    w = np.clip(1.0 + emphasis * (w - 1.0), 0.05, None)
+    for i, col in enumerate(feature_cols):
+        if col in ROLE_COLS:
+            w[i] = role_weight
     return w
 
 
 class PlayerSimilarityEngine:
-    def __init__(self, data_path=None, df: pd.DataFrame | None = None, shrink: bool = True):
+    def __init__(self, data_path=None, df: pd.DataFrame | None = None, shrink: bool = True,
+                 blend: float = MAGNITUDE_BLEND, emphasis: float = POSITION_EMPHASIS,
+                 role_weight: float = ROLE_WEIGHT):
+        self.blend, self.emphasis, self.role_weight = blend, emphasis, role_weight
         if df is None:
             from src.database import read_table          # lazy, so tests and validation can pass a frame
             df = read_table("players_master")
@@ -130,7 +156,8 @@ class PlayerSimilarityEngine:
         self.df.columns = [c.lower() for c in self.df.columns]
         self.df = self.df.dropna(subset=["player"]).drop_duplicates(subset=["player"]).reset_index(drop=True)
 
-        self.feature_cols = [c for c in self.df.columns if c.endswith("per90")]
+        self.feature_cols = ([c for c in self.df.columns if c.endswith("per90")]
+                             + [c for c in ROLE_COLS if c in self.df.columns])
         self.raw = self.df[self.feature_cols].apply(pd.to_numeric, errors="coerce")
         self.observed = self.raw.notna().to_numpy()                       # True = real data, not imputed
         pos = self.df["pos_clean"] if "pos_clean" in self.df.columns else pd.Series("", index=self.df.index)
@@ -162,37 +189,62 @@ class PlayerSimilarityEngine:
 
         mu, sigma = filled.mean(), filled.std().replace(0, 1.0)
         self.Z = ((filled - mu) / sigma).to_numpy(dtype="float32")
+        # resampling noise for the stability score, in z units: a stat known from few minutes (low
+        # reliability) or not recorded at all can move by up to a full standard deviation
+        self.noise_sd = np.sqrt(1.0 - np.clip(self.reliability, 0.0, 1.0)).astype("float32")
         self._name_to_row = {name: i for i, name in enumerate(self.df["player"])}
 
     # -- internals -----------------------------------------------------------------
     def _row(self, player: str) -> int | None:
         return self._name_to_row.get(player)
 
+    def _weights(self, i: int) -> np.ndarray:
+        pos = self.df.at[i, "pos_clean"] if "pos_clean" in self.df.columns else ""
+        return _weight_vector(pos, self.feature_cols, self.emphasis, self.role_weight)
+
+    def _similarity(self, Z: np.ndarray, i: int, w: np.ndarray) -> np.ndarray:
+        """Blend of profile shape (cosine) and level (distance) of row i against every row of Z."""
+        sw = np.sqrt(w)
+        zi = Z[i] * sw
+        Zw = Z * sw
+        dot = Zw @ zi
+        norm_i = np.linalg.norm(zi)
+        norms = np.linalg.norm(Zw, axis=1)
+        cosine = np.divide(dot, norms * norm_i, out=np.zeros_like(dot), where=(norms * norm_i) > 0)
+        dist = np.linalg.norm(Zw - zi, axis=1)
+        dist_sim = 1.0 / (1.0 + dist / max(np.sqrt(w.sum()), 1e-6))     # in (0, 1], scale-free
+        return (1 - self.blend) * ((cosine + 1) / 2) + self.blend * dist_sim
+
     def _scored(self, i: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Position-weighted similarity of row i against every other row, plus per pair:
         coverage   - share of the weighted feature mass that was OBSERVED for both players
         confidence - the same share, discounted by how reliable (sample size) each stat is for
                      both players: sum(w * sqrt(rel_i * rel_j)) / sum(w)."""
-        pos = self.df.at[i, "pos_clean"] if "pos_clean" in self.df.columns else ""
-        w = _weight_vector(pos, self.feature_cols)
-        sw = np.sqrt(w)
-
-        zi = self.Z[i] * sw
-        Zw = self.Z * sw
-        dot = Zw @ zi
-        norm_i = np.linalg.norm(zi)
-        norms = np.linalg.norm(Zw, axis=1)
-        cosine = np.divide(dot, norms * norm_i, out=np.zeros_like(dot), where=(norms * norm_i) > 0)
-
-        dist = np.linalg.norm(Zw - zi, axis=1)
-        dist_sim = 1.0 / (1.0 + dist / max(np.sqrt(w.sum()), 1e-6))     # in (0, 1], scale-free
-
-        score = (1 - MAGNITUDE_BLEND) * ((cosine + 1) / 2) + MAGNITUDE_BLEND * dist_sim
+        w = self._weights(i)
+        score = self._similarity(self.Z, i, w)
 
         obs_i = self.observed[i].astype(float)
         coverage = (self.observed.astype(float) * obs_i * w).sum(axis=1) / max(w.sum(), 1e-6)
         confidence = (np.sqrt(self.reliability * self.reliability[i]) * w).sum(axis=1) / max(w.sum(), 1e-6)
         return score, coverage, confidence
+
+    def stability(self, i: int, mask: np.ndarray, draws: int = STABILITY_DRAWS,
+                  top: int = STABILITY_TOP, seed: int = 0) -> np.ndarray:
+        """Share of resampled datasets in which each player stays among row i's `top` closest.
+        Each draw adds noise to every profile in proportion to how little data it rests on
+        (noise_sd), so a clone that only ranks high because of a thin sample drops out often."""
+        rng = np.random.default_rng(seed)
+        w = self._weights(i)
+        hits = np.zeros(len(self.df))
+        top = min(top, int(mask.sum()) - 1)
+        if top < 1:
+            return hits
+        for _ in range(draws):
+            Zb = self.Z + rng.standard_normal(self.Z.shape).astype("float32") * self.noise_sd
+            sb = np.where(mask, self._similarity(Zb, i, w), -np.inf)
+            sb[i] = -np.inf
+            hits[np.argpartition(-sb, top)[:top]] += 1
+        return hits / draws
 
     def explain(self, target_player: str, other_player: str, n: int = 3) -> dict | None:
         """Why are these two similar, and where do they differ? Uses only stats that were actually
@@ -201,8 +253,7 @@ class PlayerSimilarityEngine:
         i, j = self._row(target_player), self._row(other_player)
         if i is None or j is None:
             return None
-        pos = self.df.at[i, "pos_clean"] if "pos_clean" in self.df.columns else ""
-        w = _weight_vector(pos, self.feature_cols)
+        w = self._weights(i)
         both = self.observed[i] & self.observed[j]
         gap = np.abs(self.Z[i] - self.Z[j])
         rows = [(k, gap[k], w[k]) for k in range(len(self.feature_cols)) if both[k]]
@@ -216,7 +267,8 @@ class PlayerSimilarityEngine:
         return {"alike": alike, "differ": differ}
 
     # -- public API ------------------------------------------------------------------
-    def find_similar_players(self, target_player: str, top_n: int = 5, same_position: bool = False):
+    def find_similar_players(self, target_player: str, top_n: int = 5, same_position: bool = False,
+                             with_stability: bool = True):
         i = self._row(target_player)
         if i is None:
             return None
@@ -234,6 +286,9 @@ class PlayerSimilarityEngine:
         out["Similarity Score"] = [f"{score[j] * 100:.1f}%" for j in order]
         out["Confidence"] = [f"{confidence[j] * 100:.0f}%" for j in order]
         out["Data Coverage"] = [f"{coverage[j] * 100:.0f}%" for j in order]
+        if with_stability:
+            stab = self.stability(i, mask)
+            out["Stability"] = [f"{stab[j] * 100:.0f}%" for j in order]
         out.rename(columns={"player": "Player", "squad": "Club", "pos_clean": "Position",
                             "age_clean": "Age"}, inplace=True)
         return out.reset_index(drop=True)

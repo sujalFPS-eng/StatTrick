@@ -88,3 +88,14 @@ def test_older_seasons_are_not_touched(tmp_path):
                  ).to_csv(path, index=False)
     out = refresh_from_understat(df, [path]).iloc[0]
     assert out["min"] == 1000 and out["gls"] == 5
+
+
+def test_appearances_follow_understat(tmp_path):
+    df = frame([fbref_row("Bukayo Saka", 2001, "Arsenal", CUR, 450, gls=2)])
+    df["mp"] = 5.0
+    path = tmp_path / "understat_2627.csv"
+    pd.DataFrame([["Bukayo Saka", "Arsenal", 720, 8, 4, 2, 18, 3.1, 1.9, "EPL"]],
+                 columns=["player_name", "team_title", "time", "games", "goals", "assists", "shots", "xG", "xA",
+                          "league"]).to_csv(path, index=False)
+    out = refresh_from_understat(df, [path]).iloc[0]
+    assert out["mp"] == 8

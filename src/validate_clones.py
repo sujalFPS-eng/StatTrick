@@ -28,7 +28,7 @@ import numpy as np
 import pandas as pd
 
 from src.common import DATA_DIR, current_season_start, season_label, today, write_json
-from src.similarity_engine import PlayerSimilarityEngine
+from src.similarity_engine import MAGNITUDE_BLEND, POSITION_EMPHASIS, ROLE_WEIGHT, PlayerSimilarityEngine
 
 MIN_PAST_MINUTES = 1500        # same bar as the live clone pool
 MIN_HOLDOUT_MINUTES = 900      # ten full matches in the holdout season
@@ -77,8 +77,8 @@ def build_pool(ps: pd.DataFrame, holdout: int) -> pd.DataFrame:
     return pd.concat(rows, ignore_index=True)
 
 
-def evaluate(pool: pd.DataFrame, shrink: bool) -> dict:
-    eng = PlayerSimilarityEngine(df=pool, shrink=shrink)
+def evaluate(eng: PlayerSimilarityEngine, overlap: bool = True) -> dict:
+    """Self-retrieval on a pool built by build_pool, with the engine's current settings."""
     period = eng.df["period"].to_numpy()
     pkey = eng.df["pkey"].to_numpy()
     fut_idx = np.flatnonzero(period == "future")
@@ -90,7 +90,8 @@ def evaluate(pool: pd.DataFrame, shrink: bool) -> dict:
         score, _, _ = eng._scored(i)
         own = fut_row[pkey[i]]
         ranks.append(int((score[fut_idx] > score[own]).sum()) + 1)
-
+        if not overlap:
+            continue
         # does the player keep the same clones from one period to the next?
         past_others = past_idx[past_idx != i]
         clones_then = set(pkey[past_others[np.argsort(-score[past_others])[:TOP_K]]])
@@ -100,38 +101,95 @@ def evaluate(pool: pd.DataFrame, shrink: bool) -> dict:
         overlaps.append(len(clones_then & clones_now) / TOP_K)
 
     ranks = np.array(ranks)
-    return {"players": len(ranks), "top1": float((ranks == 1).mean()), "top5": float((ranks <= 5).mean()),
-            "top10": float((ranks <= TOP_K).mean()), "median_rank": float(np.median(ranks)),
-            "clone_overlap@10": float(np.mean(overlaps))}
+    out = {"players": len(ranks), "top1": float((ranks == 1).mean()), "top5": float((ranks <= 5).mean()),
+           "top10": float((ranks <= TOP_K).mean()), "median_rank": float(np.median(ranks)),
+           "mrr": float((1.0 / ranks).mean())}
+    if overlap:
+        out["clone_overlap@10"] = float(np.mean(overlaps))
+    return out
+
+
+# Variants compared on the test season. "original" is the engine as it was before Oct 2026.
+def variants(tuned: dict) -> dict:
+    return {
+        "original": dict(shrink=False, blend=0.35, emphasis=1.0, role_weight=0.0),
+        "+ minutes shrinkage": dict(shrink=True, blend=0.35, emphasis=1.0, role_weight=0.0),
+        "current settings": dict(shrink=True, blend=MAGNITUDE_BLEND, emphasis=POSITION_EMPHASIS,
+                                 role_weight=ROLE_WEIGHT),
+        **({"tuned (this run)": dict(shrink=True, **tuned)} if tuned else {}),
+    }
+
+
+GRID = {"blend": [0.0, 0.2, 0.35, 0.5, 0.7, 1.0], "emphasis": [0.0, 0.5, 1.0, 1.5],
+        "role_weight": [0.0, 0.5, 1.0, 2.0]}
+
+
+def tune(pool: pd.DataFrame) -> tuple[dict, pd.DataFrame]:
+    """Grid search on the TUNING season only (mean reciprocal rank of the player's own season).
+    The chosen settings are then judged on a later season they never saw."""
+    eng = PlayerSimilarityEngine(df=pool, shrink=True)
+    rows = []
+    for blend in GRID["blend"]:
+        for emphasis in GRID["emphasis"]:
+            for role_weight in GRID["role_weight"]:
+                eng.blend, eng.emphasis, eng.role_weight = blend, emphasis, role_weight
+                r = evaluate(eng, overlap=False)
+                rows.append({"blend": blend, "emphasis": emphasis, "role_weight": role_weight,
+                             "mrr": r["mrr"], "top10": r["top10"], "median_rank": r["median_rank"]})
+    grid = pd.DataFrame(rows).sort_values("mrr", ascending=False).reset_index(drop=True)
+    best = grid.iloc[0]
+    return {"blend": float(best["blend"]), "emphasis": float(best["emphasis"]),
+            "role_weight": float(best["role_weight"])}, grid
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--holdout", type=int, default=None,
-                    help="start year of the holdout season (default: last completed season with event data)")
+                    help="start year of the test season (default: last completed season with event data)")
+    ap.add_argument("--tune", action="store_true",
+                    help="grid-search blend / position emphasis / role weight on the season before the "
+                         "test season, then report the tuned settings on the test season")
     args = ap.parse_args()
 
     from src.valuation_model import build_player_seasons
     ps = build_player_seasons()
     if args.holdout is None:
         args.holdout = default_holdout(ps)
+
+    tuned, tuning = {}, None
+    if args.tune:
+        tune_pool = build_pool(ps, args.holdout - 1)
+        tuned, grid = tune(tune_pool)
+        n_tune = int((tune_pool["period"] == "past").sum())
+        print(f"\nTuning season {season_label(args.holdout - 1)} ({n_tune:,} players), best 5 of {len(grid)}:")
+        print(grid.head(5).to_string(index=False))
+        tuning = {"season": season_label(args.holdout - 1), "players": n_tune, "best": tuned,
+                  "grid_size": len(grid)}
+
     pool = build_pool(ps, args.holdout)
     n = int((pool["period"] == "past").sum())
-    print(f"\nHoldout season {season_label(args.holdout)}: {n:,} players with >= {MIN_PAST_MINUTES:,} earlier "
-          f"minutes and >= {MIN_HOLDOUT_MINUTES} holdout minutes\n")
-    with_s, without_s = evaluate(pool, shrink=True), evaluate(pool, shrink=False)
+    print(f"\nTest season {season_label(args.holdout)}: {n:,} players with >= {MIN_PAST_MINUTES:,} earlier "
+          f"minutes and >= {MIN_HOLDOUT_MINUTES} test-season minutes\n")
+    results = {}
+    for name, kw in variants(tuned).items():
+        shrink = kw.pop("shrink")
+        results[name] = evaluate(PlayerSimilarityEngine(df=pool, shrink=shrink, **kw))
+
     # the Methodology tab in the app reads this file
-    write_json(DATA_DIR / "clone_validation.json", {
-        "holdout": season_label(args.holdout), "players": n, "run_on": str(today()),
-        "with_shrinkage": {k: round(v, 4) for k, v in with_s.items()},
-        "without_shrinkage": {k: round(v, 4) for k, v in without_s.items()},
-    })
-    res = pd.DataFrame({"with shrinkage": with_s, "without shrinkage": without_s}).T
+    payload = {"holdout": season_label(args.holdout), "players": n, "run_on": str(today()),
+               "variants": {k: {m: round(v, 4) for m, v in r.items()} for k, r in results.items()},
+               "settings": {"blend": MAGNITUDE_BLEND, "emphasis": POSITION_EMPHASIS, "role_weight": ROLE_WEIGHT}}
+    if tuning:
+        payload["tuning"] = tuning
+    write_json(DATA_DIR / "clone_validation.json", payload)
+
+    res = pd.DataFrame(results).T.drop(columns=["players"])
     for c in ("top1", "top5", "top10", "clone_overlap@10"):
         res[c] = (res[c] * 100).map("{:.1f}%".format)
+    res["mrr"] = res["mrr"].map("{:.3f}".format)
     print(res.to_string())
     print(f"\ntop-k = share of players whose own {season_label(args.holdout)} season is among the k closest "
-          f"of {n:,} holdout profiles to his earlier profile (chance for top 10: {TOP_K / max(n, 1):.1%}).")
+          f"of {n:,} test-season profiles to his earlier profile (chance for top 10: {TOP_K / max(n, 1):.1%}).")
 
 
 if __name__ == "__main__":

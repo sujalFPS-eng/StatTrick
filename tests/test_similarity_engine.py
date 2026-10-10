@@ -116,3 +116,43 @@ def test_uses_recency_weighted_minutes_when_available(col):
     eng = PlayerSimilarityEngine(df=df)
     expected = (df[col] / 90).to_numpy()
     np.testing.assert_allclose(eng.n90["gls_per90"].to_numpy(), expected)
+
+
+def test_role_volume_separates_starter_from_impact_sub():
+    df = make_pool()
+    df["min_per_app"] = 80.0
+    star = df[df["player"] == "ST0"].iloc[0].to_dict()
+    starter = {**star, "player": "starter", "min_per_app": 82.0}
+    sub = {**star, "player": "sub", "min_per_app": 25.0}
+    eng = PlayerSimilarityEngine(df=pd.concat([df, pd.DataFrame([starter, sub])], ignore_index=True),
+                                 role_weight=1.0)
+    assert "min_per_app" in eng.feature_cols
+    res = eng.find_similar_players("ST0", top_n=len(eng.df), with_stability=False).set_index("Player")
+    assert float(res.at["starter", "Similarity Score"].rstrip("%")) > float(res.at["sub", "Similarity Score"].rstrip("%"))
+
+
+def test_emphasis_zero_weights_every_stat_the_same():
+    from src.similarity_engine import _weight_vector
+    cols = [f"{s}_per90" for s in STATS]
+    assert np.allclose(_weight_vector("CB", cols, emphasis=0.0), 1.0)
+    assert not np.allclose(_weight_vector("CB", cols, emphasis=1.0), 1.0)
+
+
+def test_thin_sample_clones_are_less_stable():
+    df = make_pool()
+    target = df.iloc[0].to_dict()
+    twins = pd.DataFrame([{**target, "player": "twin_small", "min": 1500.0},
+                          {**target, "player": "twin_large", "min": 12000.0}])
+    eng = PlayerSimilarityEngine(df=pd.concat([df, twins], ignore_index=True))
+    res = eng.find_similar_players(target["player"], top_n=len(eng.df)).set_index("Player")
+    pct = lambda s: float(str(s).rstrip("%"))                          # noqa: E731
+    assert pct(res.at["twin_large", "Stability"]) >= pct(res.at["twin_small", "Stability"])
+    assert pct(res.at["twin_large", "Stability"]) > 50
+    assert res["Stability"].map(pct).between(0, 100).all()
+
+
+def test_stability_is_reproducible():
+    eng = PlayerSimilarityEngine(df=make_pool())
+    a = eng.find_similar_players("ST0", top_n=5)["Stability"].tolist()
+    b = eng.find_similar_players("ST0", top_n=5)["Stability"].tolist()
+    assert a == b
