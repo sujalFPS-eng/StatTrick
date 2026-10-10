@@ -2100,6 +2100,26 @@ with tab5:
     else:
         _fc_text = "Not available in this build (the dated valuation history has not been downloaded)."
 
+    _cv = read_json(DATA_DIR / "clone_validation.json", default={}) or {}
+    _clone_text = (
+        "Each player is 15 per-90 stats. Seasons are weighted 1.0 for the current one, then 0.85, 0.65, 0.45, "
+        "0.25 and 0.10, and each per-90 is weighted by minutes as well. A rate built on few minutes is then pulled "
+        "toward the position's average, more strongly the fewer minutes behind it. How strongly is estimated "
+        "separately for each stat from how much players really differ on it (goals need far more minutes to "
+        "trust than progressive passes). Stats are standardised and weighted for the target's position. The score "
+        "is 65% profile shape (cosine similarity) and 35% level (distance), so a player with the right mix of "
+        "actions but a fraction of the output is not a near-perfect clone. Missing stats are filled with the "
+        "position average and lower the Confidence and Data Coverage scores.")
+    _w, _wo = _cv.get("with_shrinkage"), _cv.get("without_shrinkage")
+    if _w and _wo:
+        _clone_text += (
+            f"\n\nOut-of-sample check ({_cv.get('players', 0):,} players, holdout {_cv.get('holdout')}): each player's "
+            f"profile from earlier seasons was matched against everyone's {_cv.get('holdout')} profile. His own season "
+            f"came out as the closest match for {_w['top1']:.0%} of players and in the top 10 for {_w['top10']:.0%} "
+            f"(median rank {_w['median_rank']:.0f}); without the minutes adjustment it was {_wo['top1']:.0%}, "
+            f"{_wo['top10']:.0%} and {_wo['median_rank']:.0f}. Picking at random would put him in the top 10 about "
+            f"{10 / max(_cv.get('players', 1), 1):.0%} of the time.")
+
     render_metrics_html([
         ("Players", f"{_n:,}", f"{_active:,} with minutes in {_cur}", "neutral"),
         ("Model fit (log R²)", f"{_r2:.2f}", "Out-of-fold: every player priced by a model that never saw him", "neutral"),
@@ -2157,7 +2177,15 @@ and an appearance in one of the last two seasons to be included.
 - **Why this value** breaks one player's performance value into factors. Each factor's percentage is its effect
   relative to a typical player.
 - **Similarity** compares per-90 statistical profiles, weighted by position. It describes style, not quality.
+  Recent seasons count more, and players with few minutes are pulled toward their position's average.
+  See "How clones are built" below.
+- **Confidence** (clones) is how much of the comparison rests on recorded, well-sampled stats for both players.
+  **Data Coverage** counts only which stats were recorded, ignoring sample size.
 - **Fit index** compares a player to the target club's profile for his position group. 50 means no relationship.
+
+**How clones are built**
+
+{_clone_text}
 
 **Market forecast**
 
@@ -2174,6 +2202,8 @@ and an appearance in one of the last two seasons to be included.
 - Very old or very young players with exceptional market values have few comparables; the model tends to
   price them low and says so on their page.
 - A model edge is a reason to look closer, not a valuation to transact on.
+- Clones compare rates, not role: starts and share of minutes are not inputs, and per-90s partly reflect
+  the team's style, so a clone from a very different side may play a different role.
 """)
 
 # --- Application Footer ---

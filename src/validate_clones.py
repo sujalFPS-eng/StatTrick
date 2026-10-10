@@ -27,7 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import numpy as np
 import pandas as pd
 
-from src.common import DATA_DIR, current_season_start, season_label
+from src.common import DATA_DIR, current_season_start, season_label, today, write_json
 from src.similarity_engine import PlayerSimilarityEngine
 
 MIN_PAST_MINUTES = 1500        # same bar as the live clone pool
@@ -119,8 +119,14 @@ def main() -> None:
     n = int((pool["period"] == "past").sum())
     print(f"\nHoldout season {season_label(args.holdout)}: {n:,} players with >= {MIN_PAST_MINUTES:,} earlier "
           f"minutes and >= {MIN_HOLDOUT_MINUTES} holdout minutes\n")
-    res = pd.DataFrame({"with shrinkage": evaluate(pool, shrink=True),
-                        "without shrinkage": evaluate(pool, shrink=False)}).T
+    with_s, without_s = evaluate(pool, shrink=True), evaluate(pool, shrink=False)
+    # the Methodology tab in the app reads this file
+    write_json(DATA_DIR / "clone_validation.json", {
+        "holdout": season_label(args.holdout), "players": n, "run_on": str(today()),
+        "with_shrinkage": {k: round(v, 4) for k, v in with_s.items()},
+        "without_shrinkage": {k: round(v, 4) for k, v in without_s.items()},
+    })
+    res = pd.DataFrame({"with shrinkage": with_s, "without shrinkage": without_s}).T
     for c in ("top1", "top5", "top10", "clone_overlap@10"):
         res[c] = (res[c] * 100).map("{:.1f}%".format)
     print(res.to_string())

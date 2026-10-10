@@ -1,0 +1,21 @@
+{
+  "holdout": "2024-2025",
+  "players": 982,
+  "run_on": "2026-10-10",
+  "with_shrinkage": {
+    "players": 982,
+    "top1": 0.1212,
+    "top5": 0.278,
+    "top10": 0.3676,
+    "median_rank": 20.0,
+    "clone_overlap@10": 0.1729
+  },
+  "without_shrinkage": {
+    "players": 982,
+    "top1": 0.0682,
+    "top5": 0.1925,
+    "top10": 0.278,
+    "median_rank": 35.0,
+    "clone_overlap@10": 0.0957
+  }
+}
