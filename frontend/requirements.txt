@@ -1,0 +1,12 @@
+# Packages the Streamlit app needs. Streamlit Community Cloud uses this file (next to the
+# entrypoint) instead of the root requirements.txt, which also carries the pipeline's scrapers
+# and model training (seleniumbase, xgboost, ...). Leaving those out roughly halves install time
+# every time the app wakes up or redeploys.
+streamlit
+pandas
+numpy
+plotly
+scikit-learn
+google-genai
+SQLAlchemy>=2.0.0
+psycopg[binary]>=3.0.0

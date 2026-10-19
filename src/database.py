@@ -7,7 +7,7 @@ import logging
 import tomllib
 from pathlib import Path
 import pandas as pd
-from sqlalchemy import create_engine, MetaData, Table, Column, Integer, String, Float, Boolean, UniqueConstraint, text
+from sqlalchemy import create_engine, MetaData, Table, Column, Integer, String, Float, Boolean, UniqueConstraint, text, inspect
 
 logger = logging.getLogger(__name__)
 
@@ -101,9 +101,17 @@ def _qualified(name: str) -> str:
     return f'"{SCHEMA}"."{name}"' if SCHEMA else f'"{name}"'
 
 
-def read_table(name: str) -> pd.DataFrame:
-    """Read one pipeline table from the active schema (raises ValueError if it does not exist)."""
-    return pd.read_sql_table(name, con=engine, schema=SCHEMA)
+def read_table(name: str, columns=None) -> pd.DataFrame:
+    """Read one pipeline table from the active schema (raises ValueError if it does not exist).
+
+    `columns` may be a list of names or a predicate on a column name; only those are fetched,
+    which matters for wide tables read over the network (player_timeline has ~360 columns)."""
+    if callable(columns):
+        cols = [c["name"] for c in inspect(engine).get_columns(name, schema=SCHEMA)]
+        if not cols:
+            raise ValueError(f"Table {name} not found")
+        columns = [c for c in cols if columns(c)]
+    return pd.read_sql_table(name, con=engine, schema=SCHEMA, columns=columns)
 
 
 def replace_tables(tables: dict) -> None:

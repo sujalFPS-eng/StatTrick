@@ -1,0 +1,36 @@
+name: Keep Streamlit app awake
+
+# Community Cloud puts an app to sleep after about 12 hours without a visit. A browser visit
+# every 6 hours keeps it awake and keeps its data cache warm for real visitors.
+on:
+  schedule:
+    - cron: '23 */6 * * *'
+  workflow_dispatch:
+
+jobs:
+  visit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install Playwright
+      run: |
+        pip install playwright
+        python -m playwright install --with-deps chromium
+
+    - name: Visit the app
+      run: python .github/scripts/keep_awake.py
+      env:
+        APP_URL: https://stattrick.streamlit.app/
+
+    - name: Upload screenshot on failure
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: keep-awake-failure
+        path: keep_awake_failure.png
