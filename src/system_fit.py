@@ -76,13 +76,14 @@ def match_clusters_to_archetypes(centroids: pd.DataFrame, active_features: list)
 
 
 class SystemFitEngine:
-    def __init__(self, db_path=None, club_styles_path=None, force_rebuild: bool = False):
+    def __init__(self, db_path=None, club_styles_path=None, force_rebuild: bool = False,
+                 df: pd.DataFrame | None = None):
         self.db_path = Path(db_path) if db_path else DATA_DIR / "master_scouting_db.csv"
         self.club_styles_path = Path(club_styles_path) if club_styles_path else DATA_DIR / "club_tactical_profiles.parquet"
         self.scaler = StandardScaler()
 
-        # 1. Read directly from Postgres
-        self.df_players = read_table("players_master")
+        # 1. Read directly from Postgres (or use a frame the caller already loaded)
+        self.df_players = read_table("players_master") if df is None else df.copy()
         self.df_players.columns = [c.lower() for c in self.df_players.columns]
         self.df_players = (self.df_players.dropna(subset=["player"])
                             .drop_duplicates(subset=["player"]).reset_index(drop=True))

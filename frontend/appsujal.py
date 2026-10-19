@@ -7,7 +7,6 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 from datetime import datetime
-from google import genai
 
 # 1. CRITICAL: Add the parent directory to Python's path FIRST
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -868,6 +867,7 @@ def generate_tactical_brief(player_dict, squad_dict, fit_data, feature_stats, _a
     - Write in a professional, analytical front-office tone.
     """
 
+    from google import genai          # imported here: only needed when a brief is requested
     client = genai.Client(api_key=_api_key)
     response = client.models.generate_content(
         model='gemini-3.8-flash',   # NOTE: confirm this model string against your key with src/test.py
@@ -906,11 +906,20 @@ def apply_custom_theme(fig):
     return fig
 
 # --- 4. DATA LOADER & CACHING ---
-# --- 4. DATA LOADER & CACHING ---
-@st.cache_data(show_spinner=False, ttl=3600)
+# The tables only change when the weekly pipeline runs, so a few hours of caching is safe and
+# saves visitors a round-trip to the database on every cache expiry.
+CACHE_TTL = 6 * 3600
+
+@st.cache_data(show_spinner=False, ttl=CACHE_TTL)
+def load_players_raw():
+    """players_master exactly as stored. Read once and shared by the app and both engines
+    (each used to read the full table from Postgres on its own)."""
+    return read_table("players_master")
+
+@st.cache_data(show_spinner=False, ttl=CACHE_TTL)
 def load_data():
     try:
-        df = read_table("players_master")
+        df = load_players_raw()
     except ValueError:
         st.error("Database not found in Postgres. Run src/valuation_model.py first.")
         st.stop()
@@ -935,13 +944,13 @@ def load_data():
         df["player"] = df["fb_name"]
     return df
 
-@st.cache_resource(ttl=3600)
+@st.cache_resource(ttl=CACHE_TTL)
 def load_engine():
-    return PlayerSimilarityEngine()
+    return PlayerSimilarityEngine(df=load_players_raw())
 
-@st.cache_resource(ttl=3600)
+@st.cache_resource(ttl=CACHE_TTL)
 def load_system_engine():
-    engine = SystemFitEngine()
+    engine = SystemFitEngine(df=load_players_raw())
     if hasattr(engine, "club_profiles") and "squad" in engine.club_profiles.columns:
         engine.club_profiles["squad"] = engine.club_profiles["squad"].map(canon_club)
     return engine
@@ -965,10 +974,14 @@ def season_rollup(history: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-@st.cache_data(show_spinner=False, ttl=3600)
+# Columns the Fit & form view actually uses (season_rollup keeps squad, min and the per-90s).
+TIMELINE_COLS = {"pkey", "player", "season", "squad", "min"}
+
+@st.cache_data(show_spinner=False, ttl=CACHE_TTL)
 def load_timeline_data():
     try:
-        df_time = read_table("player_timeline")
+        df_time = read_table("player_timeline",
+                             columns=lambda c: c.lower() in TIMELINE_COLS or c.lower().endswith("_per90"))
         df_time.columns = [c.lower() for c in df_time.columns]
         if "squad" in df_time.columns:
             df_time["squad"] = df_time["squad"].astype(str).map(canon_club)
@@ -976,7 +989,7 @@ def load_timeline_data():
     except ValueError:
         return pd.DataFrame()
 
-@st.cache_data(show_spinner=False, ttl=3600)
+@st.cache_data(show_spinner=False, ttl=CACHE_TTL)
 def load_value_history():
     try:
         h = read_table("player_value_history")
@@ -987,16 +1000,17 @@ def load_value_history():
 
 
 # --- 5. APP EXECUTION ---
-system_engine = load_system_engine()
 inject_custom_css()
-df_master = load_data()
-df_timeline = load_timeline_data()
+with st.spinner("Loading player data..."):
+    df_master = load_data()
+    system_engine = load_system_engine()
+    df_timeline = load_timeline_data()
 
-try:
-    engine = load_engine()
-except Exception as e:
-    st.error(f"Error loading similarity engine: {e}")
-    st.stop()
+    try:
+        engine = load_engine()
+    except Exception as e:
+        st.error(f"Error loading similarity engine: {e}")
+        st.stop()
 
 # Hero Header
 st.markdown(
