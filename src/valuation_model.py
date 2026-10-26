@@ -623,20 +623,72 @@ def _why_group(col: str) -> str:
     return "output"                                   # every per-90 stat
 
 
-def _oof_with_contribs(X: pd.DataFrame, y: np.ndarray, cv):
+def _feature_family(col: str) -> str:
+    """Unit for importances: one-hot dummies collapse back to the variable they encode."""
+    if col.startswith("league_"): return "league"
+    if col.startswith("pos_clean_"): return "position"
+    return col
+
+
+def _oof_with_contribs(X: pd.DataFrame, y: np.ndarray, cv, perm_repeats: int = 3):
     """Out-of-fold predictions PLUS out-of-fold SHAP contributions: each player's explanation
-    comes from the same fold model that priced him, so the factors sum exactly to his estimate."""
+    comes from the same fold model that priced him, so the factors sum exactly to his estimate.
+    Also returns feature importances measured on the same held-out folds (see _importances)."""
     import xgboost as xgb
     oof = np.zeros(len(y))
     contrib = np.zeros((len(y), X.shape[1] + 1))       # last column = baseline
+    fams = [_feature_family(c) for c in X.columns]
+    groups = [_why_group(c) for c in X.columns]
+    # permutation units: every feature (dummies as one) and every plain-language factor
+    units = {("feature", f): [c for c, ff in zip(X.columns, fams) if ff == f] for f in dict.fromkeys(fams)}
+    units.update({("factor", g): [c for c, gg in zip(X.columns, groups) if gg == g] for g in dict.fromkeys(groups)})
+    perm = {u: [] for u in units}
+    gain = dict.fromkeys(dict.fromkeys(fams), 0.0)
+    rng = np.random.default_rng(42)
     for tr, te in cv.split(X):
         model = _xgb().fit(X.iloc[tr], y[tr])
-        oof[te] = model.predict(X.iloc[te])
-        contrib[te] = model.get_booster().predict(xgb.DMatrix(X.iloc[te]), pred_contribs=True)
-    groups = [_why_group(c) for c in X.columns]
+        X_te = X.iloc[te]
+        oof[te] = model.predict(X_te)
+        contrib[te] = model.get_booster().predict(xgb.DMatrix(X_te), pred_contribs=True)
+        base = r2_score(y[te], oof[te])
+        for u, cols in units.items():               # shuffle the unit's columns together, rows intact
+            drops = []
+            for _ in range(perm_repeats):
+                Xp = X_te.copy()
+                Xp[cols] = X_te[cols].to_numpy()[rng.permutation(len(te))]
+                drops.append(base - r2_score(y[te], model.predict(Xp)))
+            perm[u].append(float(np.mean(drops)))
+        for c, v in model.get_booster().get_score(importance_type="total_gain").items():
+            gain[_feature_family(c)] += v
     out = {g: contrib[:, [i for i, gg in enumerate(groups) if gg == g]].sum(axis=1) for g in WHY_GROUPS}
     out["base"] = contrib[:, -1]
-    return oof, out
+    return oof, out, _importances(contrib[:, :-1], fams, groups, perm, gain)
+
+
+def _importances(contrib: np.ndarray, fams: list, groups: list, perm: dict, gain: dict) -> dict:
+    """Three views of what the model relies on, all from held-out folds:
+      mean_abs_shap  average size of the feature's push on a player's log value (dummies summed
+                     per player first, so 'league' is one variable, not five)
+      perm_r2_drop   fall in held-out log R2 when the feature is shuffled (mean and SD over folds)
+      gain_share     XGBoost's native split gain, as a share of the total (training folds)"""
+    total_gain = sum(gain.values()) or 1.0
+    fam_of_group = dict(zip(fams, groups))
+
+    def _row(kind, name, mask):
+        p = np.array(perm[(kind, name)])
+        r = {"name": name, "mean_abs_shap": round(float(np.abs(contrib[:, mask].sum(axis=1)).mean()), 4),
+             "perm_r2_drop": round(float(p.mean()), 4), "perm_r2_drop_sd": round(float(p.std()), 4)}
+        if kind == "feature":
+            r["factor"] = fam_of_group[name]
+            r["gain_share"] = round(gain[name] / total_gain, 4)
+        else:
+            r["gain_share"] = round(sum(v for f, v in gain.items() if fam_of_group[f] == name) / total_gain, 4)
+        return r
+
+    feats = [_row("feature", f, np.array(fams) == f) for f in dict.fromkeys(fams)]
+    facts = [_row("factor", g, np.array(groups) == g) for g in dict.fromkeys(groups)]
+    key = lambda r: -r["mean_abs_shap"]
+    return {"features": sorted(feats, key=key), "factors": sorted(facts, key=key)}
 
 
 def quality_gate(new: dict, prev: dict | None) -> list[str]:
@@ -792,10 +844,13 @@ def build_valuation_model():
     # ---- OUT-OF-FOLD predictions: Dual-Model Architecture
     print(f"Training XGBoost Dual-Model Architecture on {len(df):,} players...")
     cv = KFold(n_splits=5, shuffle=True, random_state=42)
-    
+    importances = {}                                   # model -> feature importances (held-out folds)
+
     def _train_and_conformalize(X_matrix, name):
         print(f"  -> Training Model {name} ({X_matrix.shape[1]} features)...")
-        oof_log, why = _oof_with_contribs(X_matrix, y_log, cv)
+        oof_log, why, imp = _oof_with_contribs(X_matrix, y_log, cv)
+        importances[name.split()[0]] = {**imp, "n_features": int(X_matrix.shape[1]),
+                                        "oof_r2_log": round(float(r2_score(y_log, oof_log)), 3)}
         try:
             lo_log = cross_val_predict(_xgb(objective="reg:quantileerror", quantile_alpha=0.15), X_matrix, y_log, cv=cv)
             hi_log = cross_val_predict(_xgb(objective="reg:quantileerror", quantile_alpha=0.85), X_matrix, y_log, cv=cv)
@@ -829,8 +884,12 @@ def build_valuation_model():
 
     # market-profile estimate (performance + club level, caps, contract) and the premium it implies
     print("  -> Training market-profile models (performance + club, caps, contract)...")
-    full_a, _ = _oof_with_contribs(X_adv_full, y_log, cv)
-    full_b, _ = _oof_with_contribs(X_basic_full, y_log, cv)
+    full_a, _, imp_fa = _oof_with_contribs(X_adv_full, y_log, cv)
+    full_b, _, imp_fb = _oof_with_contribs(X_basic_full, y_log, cv)
+    importances["A_full"] = {**imp_fa, "n_features": int(X_adv_full.shape[1]),
+                             "oof_r2_log": round(float(r2_score(y_log, full_a)), 3)}
+    importances["B_full"] = {**imp_fb, "n_features": int(X_basic_full.shape[1]),
+                             "oof_r2_log": round(float(r2_score(y_log, full_b)), 3)}
     full_log = np.where(has_adv, full_a, full_b)
     df["market_profile_value_m"] = np.round(np.expm1(full_log), 2)
     df["status_premium_m"] = np.round(np.expm1(full_log) - np.expm1(oof_log), 2)
@@ -928,6 +987,9 @@ def build_valuation_model():
     replace_tables(tables)
 
     write_json(DATA_DIR / "model_metrics.json", metrics)
+    write_json(DATA_DIR / "feature_importance.json", {
+        "built_on": metrics["built_on"], "players": int(len(df)),
+        "players_with_advanced": int(has_adv.sum()), "models": importances})
     _append_history(metrics)
     print(f"Uploaded players_master to Postgres ({len(out):,} players); quality gate passed")
 
