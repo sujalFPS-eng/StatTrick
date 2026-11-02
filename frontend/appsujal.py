@@ -1944,122 +1944,93 @@ with tab4:
     section_heading("Gap analysis (Archetype-calibrated)", "Find players who plug specific system deficits")
     st.info(
         "**How this works:** We evaluate the club's metrics against their specific **Tactical Archetype's DNA** rather than generic European totals. "
-        "This ensures possession-heavy teams aren't erroneously penalized for low clearance volumes."
+        "This ensures possession-heavy teams aren't erroneously penalized for low clearance volumes. "
+        "Each unit is only judged on metrics that describe its job, and goalkeepers on shot-stopping "
+        "(PSxG net / 90) against the average top-five-league keeper."
     )
 
-    col_g1, col_g2 = st.columns(2)
-    gap_squads = sorted(system_engine.club_profiles["squad"].unique().tolist())
+    col_g1, col_g2, col_g3 = st.columns([2, 2, 1])
+    gap_squads = sorted(set(system_engine.club_profiles["squad"].dropna().astype(str))
+                        | set(df_master["squad"].dropna().astype(str)))
     gap_default = gap_squads.index("Arsenal") if "Arsenal" in gap_squads else 0
     gap_target_club = col_g1.selectbox("Select Club to Analyze", gap_squads, index=gap_default, key="gap_club")
-    target_unit = col_g2.selectbox("Target Recruitment Department", ["All Positions", "Midfield (CM/CDM/CAM)", "Defense (CB/Fullback)", "Attack (ST/Winger)"])
-
-    UNIT_TO_GROUP = {"Midfield (CM/CDM/CAM)": "MID", "Defense (CB/Fullback)": "DEF", "Attack (ST/Winger)": "ATT"}
-    GROUP_TO_POS = {"GK": ["GK"], "DEF": ["CB", "FULLBACK"], "MID": ["CM", "CDM", "CAM"], "ATT": ["ST", "WINGER"]}
+    UNIT_TO_GROUP = {"Goalkeeper (GK)": "GK", "Defense (CB/Fullback)": "DEF",
+                     "Midfield (CM/CDM/CAM)": "MID", "Attack (ST/Winger)": "ATT"}
+    target_unit = col_g2.selectbox("Target Recruitment Department", ["All Positions"] + list(UNIT_TO_GROUP))
+    gap_max_age = col_g3.slider("Max age", 18, 34, 28, key="gap_age",
+                                help="Goalkeepers get four extra years, since keepers peak later.")
+    gap_only_band = st.checkbox(
+        "Only clear bargains (market price below the fair band)", False, key="gap_band",
+        help="Off: anyone priced below their performance value, with clear bargains marked. "
+             "On: only players whose market value is below the bottom of the 70% fair band.")
 
     if st.button("Run Inverse Recruitment Engine", type="primary"):
         with st.spinner(f"Analyzing {gap_target_club}'s tactical deficiencies..."):
-            from src.system_fit import STYLE_FEATURES, ARCHETYPE_PROFILES
-            club_df = system_engine.club_profiles.copy()
+            from src.system_fit import ARCHETYPE_PROFILES
+            from src.gap_analysis import find_gaps, pick_gaps, rank_candidates, GROUP_NAMES
 
-            # club_profiles now has ONE ROW PER POSITION GROUP per club (audit #10), so a
-            # club's "weakest metric" has to be found within the position group(s) actually
-            # being searched - comparing a defensive metric to the club's attacking archetype
-            # (or vice versa) was the original bug.
-            club_rows = club_df[club_df["squad"].str.lower() == gap_target_club.lower()]
-            
-            # SAFE EXTRACT: Ensure pos_group exists before subsetting
-            if "pos_group" in club_rows.columns:
-                search_groups = [UNIT_TO_GROUP.get(target_unit, "ALL")] if target_unit in UNIT_TO_GROUP \
-                    else club_rows["pos_group"].unique().tolist()
-                club_rows = club_rows[club_rows["pos_group"].isin(search_groups)]
-
-            best = None  # (gap, feature, pos_group, archetype)
-            for _, row in club_rows.iterrows():
-                archetype = row.get("tactical_archetype", "Balanced Mid-Block & Pragmatic")
-                ideal = ARCHETYPE_PROFILES.get(archetype, ARCHETYPE_PROFILES["Balanced Mid-Block & Pragmatic"])
-                
-                # Default to "Squad" if the pos_group column is missing
-                current_group = row.get("pos_group", "Squad")
-                
-                for feat in STYLE_FEATURES:
-                    if feat not in row.index or feat not in ideal or pd.isna(row[feat]):
-                        continue
-                    # compare this unit to the SAME unit at other clubs; pooling all groups made
-                    # every defence "lack shots" and every attack "lack interceptions"
-                    peers = club_df[club_df["pos_group"] == current_group][feat] if "pos_group" in club_df.columns else club_df[feat]
-                    feat_std = peers.std()
-                    club_z = (row[feat] - peers.mean()) / (feat_std if feat_std and feat_std > 0 else 1.0)
-                    gap = ideal[feat] - club_z
-                    if best is None or gap > best[0]:
-                        best = (gap, feat, current_group, archetype)
-            if best is None:
-                st.warning(f"No profiled cohort for {gap_target_club} in this department "
-                          "(too few qualifying minutes to build a reliable position profile).")
+            # Each unit is judged only on the metrics that describe its job (src/gap_analysis.py):
+            # scoring every unit on all outfield features flagged keepers for "Tackles / 90".
+            groups = [UNIT_TO_GROUP[target_unit]] if target_unit in UNIT_TO_GROUP else None
+            all_gaps = find_gaps(df_master, gap_target_club, groups,
+                                 club_profiles=system_engine.club_profiles,
+                                 archetype_profiles=ARCHETYPE_PROFILES)
+            if all_gaps.empty:
+                st.warning(f"No profiled unit for {gap_target_club} in this department "
+                           "(too few players with 400+ minutes to build a reliable profile).")
                 st.stop()
 
-            gap_magnitude, weakness_metric, weak_group, club_archetype = best
+            # All Positions: the biggest gap in each unit. One department: its three biggest.
+            shown = pick_gaps(all_gaps, per_group=1 if groups is None else 3, limit=4)
+            if shown.empty:
+                best = all_gaps.iloc[0]
+                st.success(f"{gap_target_club} meets or beats its target on every metric checked here. "
+                           f"Smallest surplus: {GROUP_NAMES.get(best['pos_group'], best['pos_group']).lower()} "
+                           f"{label(best['metric'])} ({-best['gap']:.2f} SD above target).")
+                st.stop()
 
-            if gap_magnitude > 0:
-                verdict = (f'their squad output in <b>{label(weakness_metric)}</b> is '
-                          f'<b>{gap_magnitude:.2f} standard deviations</b> below their archetype\u2019s ideal blueprint')
-            else:
-                verdict = (f'their <b>{label(weakness_metric)}</b> output already meets or exceeds the archetype\u2019s '
-                          f'blueprint - this is their smallest surplus, not a deficit, shown as the closest thing to a gap')
+            st.caption(f"{len(shown)} gap(s) shown, largest first. Outfield units are measured against "
+                       "their tactical archetype's blueprint, relative to the same unit at other clubs; "
+                       "goalkeepers against the average top-five-league keeper.")
 
-            st.markdown(
-                f'<div style="padding: 1.2rem; border-left: 3px solid var(--coral); background: rgba(255,92,122,0.05); margin: 1rem 0; border-radius: 8px;">'
-                f'<b style="color: var(--coral);">🚨 Archetype Vulnerability ({weak_group}): {label(weakness_metric)}</b><br><br>'
-                f'{gap_target_club}\u2019s {weak_group.lower()} unit plays a <b>{club_archetype}</b> system, but {verdict}. '
-                'Surfacing targeted arbitrage solutions below:'
-                f'</div>', 
-                unsafe_allow_html=True
-            )
+            for _, gap in shown.iterrows():
+                metric, grp = gap["metric"], gap["pos_group"]
+                unit_name = GROUP_NAMES.get(grp, grp)
+                if pd.notna(gap["archetype"]):
+                    context = (f'{gap_target_club}\u2019s {unit_name.lower()} unit plays a <b>{gap["archetype"]}</b> '
+                               f'system, but its <b>{label(metric)}</b> is <b>{gap["gap"]:.2f} SD</b> below that '
+                               f'archetype\u2019s blueprint')
+                else:
+                    context = (f'{gap_target_club}\u2019s {unit_name.lower()} <b>{label(metric)}</b> is '
+                               f'<b>{gap["gap"]:.2f} SD</b> below the average unit')
+                st.markdown(
+                    f'<div style="padding: 1.2rem; border-left: 3px solid var(--coral); background: rgba(255,92,122,0.05); margin: 1rem 0 .5rem; border-radius: 8px;">'
+                    f'<b style="color: var(--coral);">\U0001F6A8 {unit_name} gap: {label(metric)}</b><br><br>'
+                    f'{context} ({gap["club_value"]:.2f} vs. {gap["peer_mean"]:.2f} for the average club).'
+                    f'</div>',
+                    unsafe_allow_html=True
+                )
 
-            candidates = df_master[
-                (df_master["squad"].str.lower() != gap_target_club.lower()) &
-                (df_master["surplus_pct"] > 0) &
-                (df_master["min"] >= 900) &
-                (df_master["age_clean"] <= 28) &
-                (df_master["pos_clean"].isin(GROUP_TO_POS[weak_group]))
-            ].copy()
-            # Same safeguards as the screener: market price below the fair band, exact name
-            # match, and rank on band-normalised edge rather than raw surplus %.
-            use_edge = "edge_z" in candidates.columns
-            if "outside_band" in candidates.columns:
-                candidates = candidates[candidates["outside_band"] == 1]
-            if "match_method" in candidates.columns:
-                candidates = candidates[candidates["match_method"] == "exact"]
-            candidates = candidates[candidates["player"].isin(RECRUITABLE)]
-            candidates = candidates.dropna(subset=[weakness_metric]) if weakness_metric in candidates.columns else candidates
-            value_col = "edge_z" if use_edge else "surplus_pct"
+                top_targets = rank_candidates(df_master, metric, grp, gap_target_club, max_age=gap_max_age,
+                                              only_below_band=gap_only_band, recruitable=RECRUITABLE, n=5)
+                if top_targets.empty:
+                    st.info("No recruitable player above the position average at this metric is priced "
+                            "below their performance value with these filters. Try a higher max age or "
+                            "turn off 'Only clear bargains'.")
+                    continue
 
-            if not candidates.empty and weakness_metric in candidates.columns:
-                m_mean = candidates[weakness_metric].mean()
-                m_std = candidates[weakness_metric].std() if candidates[weakness_metric].std() > 0 else 1.0
-                s_mean = candidates[value_col].mean()
-                s_std = candidates[value_col].std() if candidates[value_col].std() > 0 else 1.0
-
-                # cap at +/-2.5 SD so one small-sample outlier cannot carry the ranking
-                candidates["metric_z"] = ((candidates[weakness_metric] - m_mean) / m_std).clip(-2.5, 2.5)
-                candidates["surplus_z"] = ((candidates[value_col] - s_mean) / s_std).clip(-2.5, 2.5)
-                candidates["gap_score"] = (candidates["metric_z"] * 1.5) + candidates["surplus_z"]
-
-                top_targets = candidates.sort_values(by="gap_score", ascending=False).head(5)
-
-                display_cols = [c for c in ["player", "squad", "pos_clean", "age_clean", weakness_metric, "actual_value_m",
+                display_cols = [c for c in ["player", "squad", "pos_clean", "age_clean", metric, "actual_value_m",
                                             "pred_value_low_m", "predicted_value_m", "edge_z", "surplus_pct"]
                                 if c in top_targets.columns]
                 display_df = top_targets[display_cols].copy()
-
                 for c in [c for c in ["actual_value_m", "pred_value_low_m", "predicted_value_m"] if c in display_df.columns]:
                     display_df[c] = display_df[c].apply(fmt_eur_m)
                 display_df["surplus_pct"] = display_df["surplus_pct"].apply(lambda v: format_value(v, "surplus_pct"))
-                display_df[weakness_metric] = display_df[weakness_metric].apply(lambda x: f"{float(x):.2f}")
-
+                display_df[metric] = display_df[metric].apply(lambda x: f"{float(x):.2f}")
+                if "outside_band" in top_targets.columns:
+                    display_df["Clear bargain"] = np.where(top_targets["outside_band"] == 1, "Yes", "")
                 display_df.rename(columns={c: label(c) for c in display_df.columns}, inplace=True)
                 st.dataframe(display_df, hide_index=True, use_container_width=True)
-            else:
-                st.warning("No players matched the specific position filter and surplus criteria.")
 
 # --- TEAM VIEW ---
 with tab_team:
