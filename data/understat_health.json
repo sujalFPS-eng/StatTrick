@@ -1,68 +1,24 @@
 {
   "2025": {
-    "players": 2775,
+    "players": 0,
     "methods": {
-      "EPL": "api",
-      "La_liga": "api",
-      "Serie_A": "api",
-      "Bundesliga": "api",
-      "Ligue_1": "api"
+      "EPL": "none",
+      "La_liga": "none",
+      "Serie_A": "none",
+      "Bundesliga": "none",
+      "Ligue_1": "none"
     },
-    "saved": true,
-    "columns": [
-      "id",
-      "player_name",
-      "games",
-      "time",
-      "goals",
-      "xG",
-      "assists",
-      "xA",
-      "shots",
-      "key_passes",
-      "yellow_cards",
-      "red_cards",
-      "position",
-      "team_title",
-      "npg",
-      "npxG",
-      "xGChain",
-      "xGBuildup",
-      "league",
-      "season"
-    ]
+    "saved": false
   },
   "2026": {
-    "players": 2246,
+    "players": 0,
     "methods": {
-      "EPL": "api",
-      "La_liga": "api",
-      "Serie_A": "api",
-      "Bundesliga": "api",
-      "Ligue_1": "api"
+      "EPL": "none",
+      "La_liga": "none",
+      "Serie_A": "none",
+      "Bundesliga": "none",
+      "Ligue_1": "none"
     },
-    "saved": true,
-    "columns": [
-      "id",
-      "player_name",
-      "games",
-      "time",
-      "goals",
-      "xG",
-      "assists",
-      "xA",
-      "shots",
-      "key_passes",
-      "yellow_cards",
-      "red_cards",
-      "position",
-      "team_title",
-      "npg",
-      "npxG",
-      "xGChain",
-      "xGBuildup",
-      "league",
-      "season"
-    ]
+    "saved": false
   }
 }
