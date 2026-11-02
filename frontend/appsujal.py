@@ -1168,6 +1168,94 @@ def render_why(row: pd.Series) -> None:
                "the estimate by the percentage shown; together they give the performance value. "
                "Club, international status and contract are deliberately left out.")
 
+IMPORTANCE_MODELS = {      # key in data/feature_importance.json -> what it prices
+    "A": "Performance · full event data (this screener)",
+    "B": "Performance · no event data (this screener)",
+    "A_full": "Market profile · full event data",
+    "B_full": "Market profile · no event data",
+}
+FACTOR_LABELS = {
+    "age": "Age", "experience": "Career minutes", "output": "On-pitch output", "league": "League",
+    "position": "Position", "coverage": "Data coverage", "club": "Club level",
+    "international": "International status", "contract": "Contract",
+}
+FACTOR_COLORS = {
+    "age": AMBER, "experience": CYAN, "output": MINT, "league": "#A78BFA", "position": TEXT_DIM,
+    "coverage": "#5B7A70", "club": CORAL, "international": "#F472B6", "contract": "#FB923C",
+}
+IMPORTANCE_MEASURES = {
+    "Mean |SHAP|": "mean_abs_shap",
+    "Permutation (R² drop)": "perm_r2_drop",
+    "XGBoost gain": "gain_share",
+}
+
+
+def _importance_label(name: str) -> str:
+    extra = {"league": "League", "position": "Position", "has_advanced": "Has event data",
+             "adv_minutes_share": "Share of minutes with event data",
+             "adv_seasons_ago": "Seasons since last event data"}
+    return extra.get(name) or METRIC_LABELS.get(name, name.replace("_", " ").title())
+
+
+def render_feature_importance() -> None:
+    """What the valuation model relies on, measured on held-out folds by the weekly pipeline."""
+    fi = read_json(DATA_DIR / "feature_importance.json", default={}) or {}
+    models = {k: v for k, v in (fi.get("models") or {}).items() if k in IMPORTANCE_MODELS}
+    if not models:
+        st.caption("Feature importances appear here after the next weekly model run.")
+        return
+    c1, c2, c3 = st.columns([2.2, 1.6, 1])
+    model_key = c1.selectbox("Model", list(models), format_func=IMPORTANCE_MODELS.get, key="fi_model")
+    measure = c2.radio("Measure", list(IMPORTANCE_MEASURES), horizontal=True, key="fi_measure")
+    by_factor = c3.toggle("Group into factors", value=False, key="fi_group")
+    m, col = models[model_key], IMPORTANCE_MEASURES[measure]
+
+    rows = pd.DataFrame(m["factors"] if by_factor else m["features"])
+    if by_factor:
+        rows["factor"] = rows["name"]
+        rows["label"] = rows["name"].map(lambda g: FACTOR_LABELS.get(g, g.title()))
+    else:
+        rows["label"] = rows["name"].map(_importance_label)
+    rows = rows.sort_values(col, ascending=False).head(15).iloc[::-1]
+    if col == "mean_abs_shap":
+        x, x_title = 100 * np.expm1(rows[col]), "Average push on a player's value (±%)"
+        text = [f"±{v:.0f}%" for v in x]
+    elif col == "perm_r2_drop":
+        x, x_title = rows[col], "Fall in held-out R² (log value) when shuffled"
+        text = [f"{v:.3f} ± {sd:.3f}" for v, sd in zip(x, rows["perm_r2_drop_sd"])]
+    else:
+        x, x_title = 100 * rows[col], "Share of total split gain (%)"
+        text = [f"{v:.1f}%" for v in x]
+
+    fig = go.Figure(go.Bar(
+        x=x, y=rows["label"], orientation="h", text=text, textposition="outside", cliponaxis=False,
+        marker_color=[FACTOR_COLORS.get(f, TEXT_DIM) for f in rows["factor"]],
+        customdata=rows["factor"].map(lambda g: FACTOR_LABELS.get(g, g)),
+        hovertemplate="%{y}<br>Factor: %{customdata}<br>%{text}<extra></extra>",
+    ))
+    fig.update_layout(height=max(260, 30 * len(rows) + 90), xaxis_title=x_title, showlegend=False,
+                      margin=dict(t=20, b=50, l=10, r=60))
+    fig.update_xaxes(range=[0, float(np.nanmax(x)) * 1.22])      # room for the value labels
+    st.plotly_chart(apply_custom_theme(fig), use_container_width=True, config={"displayModeBar": False})
+
+    shown = [f for f in FACTOR_LABELS if f in set(rows["factor"])]
+    if not by_factor:
+        st.markdown(" ".join(
+            f'<span style="font-size:.75rem; color:var(--text-dim); margin-right:12px;">'
+            f'<i style="display:inline-block; width:9px; height:9px; border-radius:2px; background:{FACTOR_COLORS.get(f, TEXT_DIM)}; margin-right:5px;"></i>'
+            f'{FACTOR_LABELS.get(f, f)}</span>' for f in shown), unsafe_allow_html=True)
+    st.caption(
+        f"{m.get('n_features', '—')} model inputs (league and position dummies counted as one variable each), "
+        f"{fi.get('players', 0):,} players, out-of-fold log R² {m.get('oof_r2_log', '—')}, built {fi.get('built_on', '—')}. "
+        "All three measures come from the same 5-fold fit that prices every player. The screener uses the "
+        "performance models; the market-profile models add club level, caps and contract, and the gap "
+        "between the two is the status premium. "
+        "**Mean |SHAP|**: how far the input moves a typical player's estimate, either way, on held-out players. "
+        "**Permutation**: how much held-out accuracy falls when the input is shuffled (± is the spread "
+        "across folds). **XGBoost gain**: the model's own split-gain share, from the training folds. "
+        "Correlated inputs (goals and xG, shots and shots on target) share credit, so each can look smaller "
+        "than the idea it measures; grouping into factors avoids that.")
+
 # --- TAB 1: TACTICAL CLONING ---
 with tab1:
     target_row = df_master[df_master["player"] == target].iloc[0]
@@ -1781,6 +1869,11 @@ with tab2:
                            on_click=_shortlist_add, args=(_top,))
         else:
             st.warning("No players match the chosen filter parameters. Widen the age range or lower the surplus threshold.")
+
+    st.write("")
+    section_heading("What the model listens to", "Feature importances of the valuation model behind this screener")
+    with st.container(border=True):
+        render_feature_importance()
 
 # --- TAB 3: HEAD-TO-HEAD SANDBOX ---
 with tab3:
