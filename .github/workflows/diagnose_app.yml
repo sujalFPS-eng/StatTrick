@@ -1,0 +1,20 @@
+name: Diagnose app loading (temporary)
+on:
+  push:
+    branches: [claude/diagnose-app-loading]
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    - run: pip install playwright "SQLAlchemy>=2.0" "psycopg[binary]>=3.0" && python -m playwright install --with-deps chromium
+    - name: Check Neon
+      env:
+        DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      run: python .github/diag/db_check.py
+    - name: Look at the app page
+      run: python .github/diag/page_check.py
