@@ -2,11 +2,14 @@
 # entrypoint) instead of the root requirements.txt, which also carries the pipeline's scrapers
 # and model training (seleniumbase, xgboost, ...). Leaving those out roughly halves install time
 # every time the app wakes up or redeploys.
-streamlit
-pandas
-numpy
-plotly
-scikit-learn
-google-genai
-SQLAlchemy>=2.0.0
-psycopg[binary]>=3.0.0
+#
+# Versions are pinned so a wake-up never pulls in a new release the app hasn't been run with.
+# These are the versions the app was last booted and tested with (2026-11-04).
+streamlit==1.66.1
+pandas==3.1.0
+numpy==2.5.4
+plotly==7.1.0
+scikit-learn==1.9.1
+google-genai==2.34.0
+SQLAlchemy==2.1.8
+psycopg[binary]==3.3.7
