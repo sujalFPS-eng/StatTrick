@@ -21,9 +21,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import numpy as np
 import pandas as pd
-from sklearn.cluster import KMeans
-from sklearn.metrics.pairwise import cosine_similarity
-from sklearn.preprocessing import StandardScaler
 
 from src.common import DATA_DIR, POS_GROUP
 from src.database import read_table, replace_tables
@@ -57,6 +54,16 @@ MIN_STINT_MINUTES = 400
 MIN_GROUP_PLAYERS = 3          # a position group needs at least this many players to profile
 
 
+def cosine_similarity(a, b) -> np.ndarray:
+    """Row-wise cosine similarity, matching sklearn's (a zero-length row scores 0).
+    Kept in numpy so the app doesn't need scikit-learn (and scipy) installed: only the
+    pipeline's profile build uses scikit-learn, and it imports it there."""
+    a, b = np.asarray(a, dtype=float), np.asarray(b, dtype=float)
+    na = np.linalg.norm(a, axis=1, keepdims=True); na[na == 0] = 1.0
+    nb = np.linalg.norm(b, axis=1, keepdims=True); nb[nb == 0] = 1.0
+    return (a / na) @ (b / nb).T
+
+
 def match_clusters_to_archetypes(centroids: pd.DataFrame, active_features: list) -> dict:
     names = list(ARCHETYPE_PROFILES.keys())
     ref = np.array([[ARCHETYPE_PROFILES[n].get(f, 0.0) for f in active_features] for n in names])
@@ -80,7 +87,6 @@ class SystemFitEngine:
                  df: pd.DataFrame | None = None):
         self.db_path = Path(db_path) if db_path else DATA_DIR / "master_scouting_db.csv"
         self.club_styles_path = Path(club_styles_path) if club_styles_path else DATA_DIR / "club_tactical_profiles.parquet"
-        self.scaler = StandardScaler()
 
         # 1. Read directly from Postgres (or use a frame the caller already loaded)
         self.df_players = read_table("players_master") if df is None else df.copy()
@@ -120,6 +126,9 @@ class SystemFitEngine:
 
     # ------------------------------------------------------------------
     def build_and_save_profiles(self) -> pd.DataFrame:
+        # Pipeline-only, so imported here: the app never builds profiles and skips scikit-learn.
+        from sklearn.cluster import KMeans
+        from sklearn.preprocessing import StandardScaler
         df = self.df_players.copy()
         active = [f for f in STYLE_FEATURES if f in df.columns and pd.to_numeric(df[f], errors="coerce").std() > 1e-4]
         qual = df[pd.to_numeric(df["min"], errors="coerce") >= MIN_STINT_MINUTES].copy()
@@ -154,7 +163,7 @@ class SystemFitEngine:
                 g = g.copy(); g["cluster_id"] = 0
                 g["tactical_archetype"] = "Balanced Mid-Block & Pragmatic"
                 out_parts.append(g); continue
-            X = self.scaler.fit_transform(g[local_active].fillna(g[local_active].mean()))
+            X = StandardScaler().fit_transform(g[local_active].fillna(g[local_active].mean()))
             k = min(4, len(g))
             km = KMeans(n_clusters=k, random_state=42, n_init=20).fit(X)
             g = g.copy()
