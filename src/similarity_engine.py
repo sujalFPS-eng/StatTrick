@@ -36,7 +36,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import numpy as np
 import pandas as pd
-from sklearn.metrics.pairwise import cosine_similarity
 
 # Place your new imports DOWN HERE, after the future annotations and standard library imports
 from src.common import DATA_DIR, POS_GROUP
