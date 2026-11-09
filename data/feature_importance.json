@@ -1,5 +1,5 @@
 {
-  "built_on": "2026-11-04",
+  "built_on": "2026-11-09",
   "players": 2002,
   "players_with_advanced": 1815,
   "models": {
@@ -7,176 +7,176 @@
       "features": [
         {
           "name": "age_clean",
-          "mean_abs_shap": 0.5038,
-          "perm_r2_drop": 0.9111,
-          "perm_r2_drop_sd": 0.0712,
+          "mean_abs_shap": 0.5142,
+          "perm_r2_drop": 0.9277,
+          "perm_r2_drop_sd": 0.0722,
           "factor": "age",
-          "gain_share": 0.3691
+          "gain_share": 0.3817
         },
         {
           "name": "min",
-          "mean_abs_shap": 0.3135,
-          "perm_r2_drop": 0.3607,
-          "perm_r2_drop_sd": 0.0162,
+          "mean_abs_shap": 0.3174,
+          "perm_r2_drop": 0.3627,
+          "perm_r2_drop_sd": 0.021,
           "factor": "experience",
-          "gain_share": 0.1471
+          "gain_share": 0.151
         },
         {
           "name": "league",
-          "mean_abs_shap": 0.2095,
-          "perm_r2_drop": 0.1337,
-          "perm_r2_drop_sd": 0.0099,
+          "mean_abs_shap": 0.2107,
+          "perm_r2_drop": 0.1343,
+          "perm_r2_drop_sd": 0.0096,
           "factor": "league",
-          "gain_share": 0.108
+          "gain_share": 0.1066
         },
         {
           "name": "gls_per90",
-          "mean_abs_shap": 0.1268,
-          "perm_r2_drop": 0.0705,
-          "perm_r2_drop_sd": 0.0097,
+          "mean_abs_shap": 0.1232,
+          "perm_r2_drop": 0.0663,
+          "perm_r2_drop_sd": 0.0106,
           "factor": "output",
-          "gain_share": 0.0469
+          "gain_share": 0.0439
         },
         {
           "name": "prgp_per90",
-          "mean_abs_shap": 0.1167,
-          "perm_r2_drop": 0.0601,
-          "perm_r2_drop_sd": 0.0087,
+          "mean_abs_shap": 0.1141,
+          "perm_r2_drop": 0.0597,
+          "perm_r2_drop_sd": 0.0084,
           "factor": "output",
-          "gain_share": 0.0487
+          "gain_share": 0.0455
         },
         {
           "name": "adv_minutes_share",
-          "mean_abs_shap": 0.11,
-          "perm_r2_drop": 0.0541,
-          "perm_r2_drop_sd": 0.006,
+          "mean_abs_shap": 0.1072,
+          "perm_r2_drop": 0.0504,
+          "perm_r2_drop_sd": 0.0047,
           "factor": "coverage",
-          "gain_share": 0.0584
+          "gain_share": 0.0471
         },
         {
           "name": "ast_per90",
-          "mean_abs_shap": 0.0684,
-          "perm_r2_drop": 0.0231,
-          "perm_r2_drop_sd": 0.0057,
+          "mean_abs_shap": 0.0682,
+          "perm_r2_drop": 0.0232,
+          "perm_r2_drop_sd": 0.0053,
           "factor": "output",
-          "gain_share": 0.0319
+          "gain_share": 0.0327
         },
         {
           "name": "position",
-          "mean_abs_shap": 0.0444,
-          "perm_r2_drop": 0.0145,
-          "perm_r2_drop_sd": 0.0045,
+          "mean_abs_shap": 0.0411,
+          "perm_r2_drop": 0.0128,
+          "perm_r2_drop_sd": 0.0032,
           "factor": "position",
           "gain_share": 0.0097
         },
         {
           "name": "xag_per90",
-          "mean_abs_shap": 0.0421,
-          "perm_r2_drop": 0.0087,
-          "perm_r2_drop_sd": 0.0046,
+          "mean_abs_shap": 0.041,
+          "perm_r2_drop": 0.0089,
+          "perm_r2_drop_sd": 0.0029,
           "factor": "output",
-          "gain_share": 0.0298
-        },
-        {
-          "name": "aer_won_per90",
-          "mean_abs_shap": 0.0364,
-          "perm_r2_drop": 0.0088,
-          "perm_r2_drop_sd": 0.0016,
-          "factor": "output",
-          "gain_share": 0.0212
+          "gain_share": 0.0285
         },
         {
           "name": "xg_per90",
-          "mean_abs_shap": 0.0317,
-          "perm_r2_drop": 0.007,
-          "perm_r2_drop_sd": 0.0027,
+          "mean_abs_shap": 0.0345,
+          "perm_r2_drop": 0.0079,
+          "perm_r2_drop_sd": 0.0038,
           "factor": "output",
-          "gain_share": 0.0177
+          "gain_share": 0.0203
+        },
+        {
+          "name": "aer_won_per90",
+          "mean_abs_shap": 0.0341,
+          "perm_r2_drop": 0.0082,
+          "perm_r2_drop_sd": 0.001,
+          "factor": "output",
+          "gain_share": 0.0199
         },
         {
           "name": "prgc_per90",
-          "mean_abs_shap": 0.0271,
+          "mean_abs_shap": 0.0253,
           "perm_r2_drop": 0.0035,
-          "perm_r2_drop_sd": 0.0019,
+          "perm_r2_drop_sd": 0.0014,
           "factor": "output",
-          "gain_share": 0.0135
-        },
-        {
-          "name": "sot_per90",
-          "mean_abs_shap": 0.0226,
-          "perm_r2_drop": 0.0038,
-          "perm_r2_drop_sd": 0.0013,
-          "factor": "output",
-          "gain_share": 0.0194
+          "gain_share": 0.013
         },
         {
           "name": "sh_per90",
-          "mean_abs_shap": 0.0202,
-          "perm_r2_drop": 0.0026,
-          "perm_r2_drop_sd": 0.002,
+          "mean_abs_shap": 0.0251,
+          "perm_r2_drop": 0.0028,
+          "perm_r2_drop_sd": 0.0012,
           "factor": "output",
-          "gain_share": 0.0189
+          "gain_share": 0.0187
         },
         {
-          "name": "clr_per90",
-          "mean_abs_shap": 0.0198,
-          "perm_r2_drop": 0.0031,
-          "perm_r2_drop_sd": 0.0021,
+          "name": "sot_per90",
+          "mean_abs_shap": 0.0239,
+          "perm_r2_drop": 0.0042,
+          "perm_r2_drop_sd": 0.0023,
           "factor": "output",
-          "gain_share": 0.0119
+          "gain_share": 0.0196
         },
         {
           "name": "int_per90",
           "mean_abs_shap": 0.0194,
           "perm_r2_drop": 0.0033,
-          "perm_r2_drop_sd": 0.0023,
+          "perm_r2_drop_sd": 0.0013,
           "factor": "output",
-          "gain_share": 0.014
+          "gain_share": 0.0143
+        },
+        {
+          "name": "clr_per90",
+          "mean_abs_shap": 0.0187,
+          "perm_r2_drop": 0.0034,
+          "perm_r2_drop_sd": 0.0006,
+          "factor": "output",
+          "gain_share": 0.0125
         },
         {
           "name": "tkl_per90",
-          "mean_abs_shap": 0.0182,
-          "perm_r2_drop": 0.0028,
-          "perm_r2_drop_sd": 0.0005,
+          "mean_abs_shap": 0.0179,
+          "perm_r2_drop": 0.0036,
+          "perm_r2_drop_sd": 0.0007,
           "factor": "output",
-          "gain_share": 0.0133
+          "gain_share": 0.0142
         },
         {
           "name": "psxg_net_per90",
-          "mean_abs_shap": 0.0143,
-          "perm_r2_drop": 0.0034,
-          "perm_r2_drop_sd": 0.0024,
+          "mean_abs_shap": 0.0146,
+          "perm_r2_drop": 0.0036,
+          "perm_r2_drop_sd": 0.0034,
           "factor": "output",
           "gain_share": 0.0047
         },
         {
           "name": "blk_per90",
-          "mean_abs_shap": 0.013,
-          "perm_r2_drop": 0.0006,
-          "perm_r2_drop_sd": 0.0024,
+          "mean_abs_shap": 0.0127,
+          "perm_r2_drop": 0.0007,
+          "perm_r2_drop_sd": 0.0013,
           "factor": "output",
-          "gain_share": 0.0093
+          "gain_share": 0.0092
         },
         {
           "name": "saves_per90",
-          "mean_abs_shap": 0.0096,
-          "perm_r2_drop": 0.0019,
-          "perm_r2_drop_sd": 0.0011,
+          "mean_abs_shap": 0.0104,
+          "perm_r2_drop": 0.0016,
+          "perm_r2_drop_sd": 0.0015,
           "factor": "output",
-          "gain_share": 0.0038
+          "gain_share": 0.0046
         },
         {
           "name": "adv_seasons_ago",
-          "mean_abs_shap": 0.0038,
-          "perm_r2_drop": -0.0,
-          "perm_r2_drop_sd": 0.0002,
+          "mean_abs_shap": 0.0039,
+          "perm_r2_drop": -0.0001,
+          "perm_r2_drop_sd": 0.0008,
           "factor": "coverage",
-          "gain_share": 0.0025
+          "gain_share": 0.0022
         },
         {
           "name": "has_advanced",
-          "mean_abs_shap": 0.0001,
-          "perm_r2_drop": -0.0,
+          "mean_abs_shap": 0.0003,
+          "perm_r2_drop": 0.0001,
           "perm_r2_drop_sd": 0.0001,
           "factor": "coverage",
           "gain_share": 0.0001
@@ -185,436 +185,436 @@
       "factors": [
         {
           "name": "age",
-          "mean_abs_shap": 0.5038,
-          "perm_r2_drop": 0.8893,
-          "perm_r2_drop_sd": 0.0707,
-          "gain_share": 0.3691
+          "mean_abs_shap": 0.5142,
+          "perm_r2_drop": 0.9023,
+          "perm_r2_drop_sd": 0.0752,
+          "gain_share": 0.3817
         },
         {
           "name": "experience",
-          "mean_abs_shap": 0.3135,
-          "perm_r2_drop": 0.3655,
-          "perm_r2_drop_sd": 0.0257,
-          "gain_share": 0.1471
+          "mean_abs_shap": 0.3174,
+          "perm_r2_drop": 0.364,
+          "perm_r2_drop_sd": 0.0236,
+          "gain_share": 0.151
         },
         {
           "name": "output",
-          "mean_abs_shap": 0.2719,
-          "perm_r2_drop": 0.2655,
-          "perm_r2_drop_sd": 0.0282,
-          "gain_share": 0.3051
+          "mean_abs_shap": 0.2697,
+          "perm_r2_drop": 0.2647,
+          "perm_r2_drop_sd": 0.0335,
+          "gain_share": 0.3017
         },
         {
           "name": "league",
-          "mean_abs_shap": 0.2095,
-          "perm_r2_drop": 0.1344,
-          "perm_r2_drop_sd": 0.0208,
-          "gain_share": 0.108
+          "mean_abs_shap": 0.2107,
+          "perm_r2_drop": 0.1349,
+          "perm_r2_drop_sd": 0.0194,
+          "gain_share": 0.1066
         },
         {
           "name": "coverage",
-          "mean_abs_shap": 0.1108,
-          "perm_r2_drop": 0.0528,
-          "perm_r2_drop_sd": 0.0074,
-          "gain_share": 0.061
+          "mean_abs_shap": 0.1079,
+          "perm_r2_drop": 0.0482,
+          "perm_r2_drop_sd": 0.0064,
+          "gain_share": 0.0493
         },
         {
           "name": "position",
-          "mean_abs_shap": 0.0444,
-          "perm_r2_drop": 0.0156,
-          "perm_r2_drop_sd": 0.004,
+          "mean_abs_shap": 0.0411,
+          "perm_r2_drop": 0.0137,
+          "perm_r2_drop_sd": 0.0031,
           "gain_share": 0.0097
         }
       ],
       "n_features": 33,
-      "oof_r2_log": 0.764
+      "oof_r2_log": 0.763
     },
     "B": {
       "features": [
         {
           "name": "age_clean",
-          "mean_abs_shap": 0.5299,
-          "perm_r2_drop": 0.9686,
-          "perm_r2_drop_sd": 0.1092,
+          "mean_abs_shap": 0.5352,
+          "perm_r2_drop": 0.9827,
+          "perm_r2_drop_sd": 0.1067,
           "factor": "age",
-          "gain_share": 0.3901
+          "gain_share": 0.3942
         },
         {
           "name": "min",
-          "mean_abs_shap": 0.3321,
-          "perm_r2_drop": 0.3872,
-          "perm_r2_drop_sd": 0.0251,
+          "mean_abs_shap": 0.3316,
+          "perm_r2_drop": 0.3867,
+          "perm_r2_drop_sd": 0.0283,
           "factor": "experience",
-          "gain_share": 0.1583
+          "gain_share": 0.1564
         },
         {
           "name": "league",
-          "mean_abs_shap": 0.2051,
-          "perm_r2_drop": 0.1372,
-          "perm_r2_drop_sd": 0.0159,
+          "mean_abs_shap": 0.2076,
+          "perm_r2_drop": 0.133,
+          "perm_r2_drop_sd": 0.0167,
           "factor": "league",
-          "gain_share": 0.1084
+          "gain_share": 0.1097
         },
         {
           "name": "gls_per90",
-          "mean_abs_shap": 0.1295,
-          "perm_r2_drop": 0.076,
-          "perm_r2_drop_sd": 0.0127,
+          "mean_abs_shap": 0.1317,
+          "perm_r2_drop": 0.0764,
+          "perm_r2_drop_sd": 0.0123,
           "factor": "output",
-          "gain_share": 0.0458
+          "gain_share": 0.0518
         },
         {
           "name": "ast_per90",
-          "mean_abs_shap": 0.0763,
-          "perm_r2_drop": 0.0228,
-          "perm_r2_drop_sd": 0.0073,
+          "mean_abs_shap": 0.0786,
+          "perm_r2_drop": 0.0238,
+          "perm_r2_drop_sd": 0.0084,
           "factor": "output",
-          "gain_share": 0.0389
+          "gain_share": 0.0382
         },
         {
           "name": "position",
-          "mean_abs_shap": 0.0708,
-          "perm_r2_drop": 0.0312,
-          "perm_r2_drop_sd": 0.0048,
+          "mean_abs_shap": 0.0695,
+          "perm_r2_drop": 0.0299,
+          "perm_r2_drop_sd": 0.0049,
           "factor": "position",
-          "gain_share": 0.0154
+          "gain_share": 0.0158
         },
         {
           "name": "xag_per90",
-          "mean_abs_shap": 0.0623,
-          "perm_r2_drop": 0.0189,
-          "perm_r2_drop_sd": 0.0031,
+          "mean_abs_shap": 0.0614,
+          "perm_r2_drop": 0.0181,
+          "perm_r2_drop_sd": 0.0025,
           "factor": "output",
-          "gain_share": 0.0406
+          "gain_share": 0.0377
         },
         {
           "name": "saves_per90",
-          "mean_abs_shap": 0.0402,
-          "perm_r2_drop": 0.0095,
-          "perm_r2_drop_sd": 0.0047,
+          "mean_abs_shap": 0.0399,
+          "perm_r2_drop": 0.0078,
+          "perm_r2_drop_sd": 0.0044,
           "factor": "output",
-          "gain_share": 0.0092
+          "gain_share": 0.0103
         },
         {
           "name": "xg_per90",
-          "mean_abs_shap": 0.0394,
-          "perm_r2_drop": 0.0106,
-          "perm_r2_drop_sd": 0.0043,
+          "mean_abs_shap": 0.0354,
+          "perm_r2_drop": 0.0088,
+          "perm_r2_drop_sd": 0.0052,
           "factor": "output",
-          "gain_share": 0.0273
+          "gain_share": 0.0225
         },
         {
           "name": "aer_won_per90",
-          "mean_abs_shap": 0.0328,
-          "perm_r2_drop": 0.0082,
-          "perm_r2_drop_sd": 0.0028,
+          "mean_abs_shap": 0.032,
+          "perm_r2_drop": 0.0087,
+          "perm_r2_drop_sd": 0.0016,
           "factor": "output",
-          "gain_share": 0.0268
+          "gain_share": 0.03
         },
         {
           "name": "tkl_per90",
-          "mean_abs_shap": 0.0327,
-          "perm_r2_drop": 0.0056,
-          "perm_r2_drop_sd": 0.0009,
+          "mean_abs_shap": 0.0317,
+          "perm_r2_drop": 0.003,
+          "perm_r2_drop_sd": 0.0019,
           "factor": "output",
-          "gain_share": 0.026
+          "gain_share": 0.0231
         },
         {
           "name": "sh_per90",
-          "mean_abs_shap": 0.029,
-          "perm_r2_drop": 0.0031,
-          "perm_r2_drop_sd": 0.001,
+          "mean_abs_shap": 0.0308,
+          "perm_r2_drop": 0.0024,
+          "perm_r2_drop_sd": 0.0038,
           "factor": "output",
-          "gain_share": 0.0262
+          "gain_share": 0.0256
         },
         {
           "name": "blk_per90",
-          "mean_abs_shap": 0.0278,
-          "perm_r2_drop": 0.0039,
-          "perm_r2_drop_sd": 0.0019,
+          "mean_abs_shap": 0.0271,
+          "perm_r2_drop": 0.0027,
+          "perm_r2_drop_sd": 0.0014,
           "factor": "output",
-          "gain_share": 0.0177
-        },
-        {
-          "name": "sot_per90",
-          "mean_abs_shap": 0.027,
-          "perm_r2_drop": 0.0037,
-          "perm_r2_drop_sd": 0.003,
-          "factor": "output",
-          "gain_share": 0.0215
+          "gain_share": 0.0168
         },
         {
           "name": "int_per90",
-          "mean_abs_shap": 0.0263,
-          "perm_r2_drop": 0.0049,
-          "perm_r2_drop_sd": 0.0018,
+          "mean_abs_shap": 0.0265,
+          "perm_r2_drop": 0.0045,
+          "perm_r2_drop_sd": 0.0025,
           "factor": "output",
-          "gain_share": 0.0211
+          "gain_share": 0.0214
+        },
+        {
+          "name": "sot_per90",
+          "mean_abs_shap": 0.0264,
+          "perm_r2_drop": 0.0026,
+          "perm_r2_drop_sd": 0.0022,
+          "factor": "output",
+          "gain_share": 0.0204
         },
         {
           "name": "clr_per90",
-          "mean_abs_shap": 0.0257,
-          "perm_r2_drop": 0.0062,
-          "perm_r2_drop_sd": 0.0032,
+          "mean_abs_shap": 0.0243,
+          "perm_r2_drop": 0.0058,
+          "perm_r2_drop_sd": 0.0027,
           "factor": "output",
-          "gain_share": 0.0212
+          "gain_share": 0.0203
         },
         {
           "name": "psxg_net_per90",
-          "mean_abs_shap": 0.0129,
-          "perm_r2_drop": 0.0021,
-          "perm_r2_drop_sd": 0.0035,
+          "mean_abs_shap": 0.0139,
+          "perm_r2_drop": 0.0027,
+          "perm_r2_drop_sd": 0.0038,
           "factor": "output",
-          "gain_share": 0.0055
+          "gain_share": 0.0056
         }
       ],
       "factors": [
         {
           "name": "age",
-          "mean_abs_shap": 0.5299,
-          "perm_r2_drop": 0.946,
-          "perm_r2_drop_sd": 0.0906,
-          "gain_share": 0.3901
+          "mean_abs_shap": 0.5352,
+          "perm_r2_drop": 0.9568,
+          "perm_r2_drop_sd": 0.0882,
+          "gain_share": 0.3942
         },
         {
           "name": "experience",
-          "mean_abs_shap": 0.3321,
-          "perm_r2_drop": 0.3807,
-          "perm_r2_drop_sd": 0.0277,
-          "gain_share": 0.1583
+          "mean_abs_shap": 0.3316,
+          "perm_r2_drop": 0.3782,
+          "perm_r2_drop_sd": 0.0315,
+          "gain_share": 0.1564
         },
         {
           "name": "output",
-          "mean_abs_shap": 0.2646,
-          "perm_r2_drop": 0.2486,
-          "perm_r2_drop_sd": 0.0223,
-          "gain_share": 0.3278
+          "mean_abs_shap": 0.2652,
+          "perm_r2_drop": 0.2481,
+          "perm_r2_drop_sd": 0.0193,
+          "gain_share": 0.3238
         },
         {
           "name": "league",
-          "mean_abs_shap": 0.2051,
-          "perm_r2_drop": 0.1337,
-          "perm_r2_drop_sd": 0.0136,
-          "gain_share": 0.1084
+          "mean_abs_shap": 0.2076,
+          "perm_r2_drop": 0.1306,
+          "perm_r2_drop_sd": 0.0137,
+          "gain_share": 0.1097
         },
         {
           "name": "position",
-          "mean_abs_shap": 0.0708,
-          "perm_r2_drop": 0.032,
-          "perm_r2_drop_sd": 0.0061,
-          "gain_share": 0.0154
+          "mean_abs_shap": 0.0695,
+          "perm_r2_drop": 0.0297,
+          "perm_r2_drop_sd": 0.005,
+          "gain_share": 0.0158
         }
       ],
       "n_features": 28,
-      "oof_r2_log": 0.727
+      "oof_r2_log": 0.726
     },
     "A_full": {
       "features": [
         {
           "name": "age_clean",
-          "mean_abs_shap": 0.4291,
-          "perm_r2_drop": 0.6132,
-          "perm_r2_drop_sd": 0.0478,
+          "mean_abs_shap": 0.4465,
+          "perm_r2_drop": 0.6446,
+          "perm_r2_drop_sd": 0.0541,
           "factor": "age",
-          "gain_share": 0.2889
-        },
-        {
-          "name": "min",
-          "mean_abs_shap": 0.2274,
-          "perm_r2_drop": 0.1892,
-          "perm_r2_drop_sd": 0.0171,
-          "factor": "experience",
-          "gain_share": 0.0829
+          "gain_share": 0.3269
         },
         {
           "name": "club_goals_pm",
-          "mean_abs_shap": 0.2267,
-          "perm_r2_drop": 0.1382,
-          "perm_r2_drop_sd": 0.0168,
+          "mean_abs_shap": 0.236,
+          "perm_r2_drop": 0.1457,
+          "perm_r2_drop_sd": 0.0209,
           "factor": "club",
-          "gain_share": 0.1547
+          "gain_share": 0.1684
+        },
+        {
+          "name": "min",
+          "mean_abs_shap": 0.2312,
+          "perm_r2_drop": 0.1927,
+          "perm_r2_drop_sd": 0.0188,
+          "factor": "experience",
+          "gain_share": 0.088
         },
         {
           "name": "league",
-          "mean_abs_shap": 0.169,
-          "perm_r2_drop": 0.1,
-          "perm_r2_drop_sd": 0.005,
+          "mean_abs_shap": 0.167,
+          "perm_r2_drop": 0.0963,
+          "perm_r2_drop_sd": 0.0044,
           "factor": "league",
-          "gain_share": 0.0865
+          "gain_share": 0.0841
         },
         {
           "name": "club_caps",
-          "mean_abs_shap": 0.1425,
-          "perm_r2_drop": 0.0565,
-          "perm_r2_drop_sd": 0.0082,
+          "mean_abs_shap": 0.141,
+          "perm_r2_drop": 0.0553,
+          "perm_r2_drop_sd": 0.0087,
           "factor": "club",
-          "gain_share": 0.124
+          "gain_share": 0.1088
         },
         {
           "name": "adv_minutes_share",
-          "mean_abs_shap": 0.1207,
-          "perm_r2_drop": 0.0636,
-          "perm_r2_drop_sd": 0.0084,
+          "mean_abs_shap": 0.1203,
+          "perm_r2_drop": 0.064,
+          "perm_r2_drop_sd": 0.0087,
           "factor": "coverage",
-          "gain_share": 0.0545
+          "gain_share": 0.0499
         },
         {
           "name": "contract_years_left",
-          "mean_abs_shap": 0.0831,
-          "perm_r2_drop": 0.0193,
-          "perm_r2_drop_sd": 0.0014,
+          "mean_abs_shap": 0.078,
+          "perm_r2_drop": 0.0173,
+          "perm_r2_drop_sd": 0.0008,
           "factor": "contract",
-          "gain_share": 0.0532
+          "gain_share": 0.0337
         },
         {
           "name": "international_caps",
-          "mean_abs_shap": 0.0672,
-          "perm_r2_drop": 0.02,
-          "perm_r2_drop_sd": 0.0022,
+          "mean_abs_shap": 0.0646,
+          "perm_r2_drop": 0.0186,
+          "perm_r2_drop_sd": 0.0024,
           "factor": "international",
-          "gain_share": 0.0333
+          "gain_share": 0.0278
         },
         {
           "name": "gls_per90",
-          "mean_abs_shap": 0.0638,
-          "perm_r2_drop": 0.0186,
-          "perm_r2_drop_sd": 0.0042,
+          "mean_abs_shap": 0.0622,
+          "perm_r2_drop": 0.0183,
+          "perm_r2_drop_sd": 0.004,
           "factor": "output",
-          "gain_share": 0.0199
+          "gain_share": 0.0191
         },
         {
           "name": "prgp_per90",
-          "mean_abs_shap": 0.0443,
+          "mean_abs_shap": 0.044,
           "perm_r2_drop": 0.0081,
           "perm_r2_drop_sd": 0.0012,
           "factor": "output",
-          "gain_share": 0.0134
-        },
-        {
-          "name": "ast_per90",
-          "mean_abs_shap": 0.0203,
-          "perm_r2_drop": 0.0018,
-          "perm_r2_drop_sd": 0.001,
-          "factor": "output",
-          "gain_share": 0.0099
-        },
-        {
-          "name": "position",
-          "mean_abs_shap": 0.0193,
-          "perm_r2_drop": 0.0023,
-          "perm_r2_drop_sd": 0.0013,
-          "factor": "position",
-          "gain_share": 0.0036
+          "gain_share": 0.0125
         },
         {
           "name": "xg_per90",
-          "mean_abs_shap": 0.0179,
-          "perm_r2_drop": 0.0012,
-          "perm_r2_drop_sd": 0.0014,
+          "mean_abs_shap": 0.0211,
+          "perm_r2_drop": 0.0018,
+          "perm_r2_drop_sd": 0.0016,
           "factor": "output",
-          "gain_share": 0.0094
+          "gain_share": 0.0091
+        },
+        {
+          "name": "ast_per90",
+          "mean_abs_shap": 0.0197,
+          "perm_r2_drop": 0.0019,
+          "perm_r2_drop_sd": 0.0015,
+          "factor": "output",
+          "gain_share": 0.0078
+        },
+        {
+          "name": "position",
+          "mean_abs_shap": 0.0186,
+          "perm_r2_drop": 0.0023,
+          "perm_r2_drop_sd": 0.0011,
+          "factor": "position",
+          "gain_share": 0.0035
         },
         {
           "name": "sh_per90",
-          "mean_abs_shap": 0.0154,
-          "perm_r2_drop": 0.0014,
-          "perm_r2_drop_sd": 0.0008,
+          "mean_abs_shap": 0.0165,
+          "perm_r2_drop": 0.0009,
+          "perm_r2_drop_sd": 0.0011,
           "factor": "output",
-          "gain_share": 0.0088
+          "gain_share": 0.0083
         },
         {
           "name": "xag_per90",
-          "mean_abs_shap": 0.0151,
+          "mean_abs_shap": 0.0157,
           "perm_r2_drop": 0.0015,
-          "perm_r2_drop_sd": 0.0007,
+          "perm_r2_drop_sd": 0.0005,
           "factor": "output",
-          "gain_share": 0.0074
-        },
-        {
-          "name": "sot_per90",
-          "mean_abs_shap": 0.015,
-          "perm_r2_drop": 0.0009,
-          "perm_r2_drop_sd": 0.001,
-          "factor": "output",
-          "gain_share": 0.0096
-        },
-        {
-          "name": "aer_won_per90",
-          "mean_abs_shap": 0.0127,
-          "perm_r2_drop": 0.0009,
-          "perm_r2_drop_sd": 0.001,
-          "factor": "output",
-          "gain_share": 0.0067
+          "gain_share": 0.0079
         },
         {
           "name": "prgc_per90",
-          "mean_abs_shap": 0.0126,
-          "perm_r2_drop": 0.0006,
-          "perm_r2_drop_sd": 0.0012,
+          "mean_abs_shap": 0.0132,
+          "perm_r2_drop": 0.0008,
+          "perm_r2_drop_sd": 0.0013,
+          "factor": "output",
+          "gain_share": 0.0054
+        },
+        {
+          "name": "sot_per90",
+          "mean_abs_shap": 0.0131,
+          "perm_r2_drop": 0.0012,
+          "perm_r2_drop_sd": 0.0009,
+          "factor": "output",
+          "gain_share": 0.0083
+        },
+        {
+          "name": "aer_won_per90",
+          "mean_abs_shap": 0.0121,
+          "perm_r2_drop": 0.001,
+          "perm_r2_drop_sd": 0.0008,
           "factor": "output",
           "gain_share": 0.0064
         },
         {
           "name": "saves_per90",
-          "mean_abs_shap": 0.0118,
-          "perm_r2_drop": 0.0014,
-          "perm_r2_drop_sd": 0.0008,
+          "mean_abs_shap": 0.0109,
+          "perm_r2_drop": 0.001,
+          "perm_r2_drop_sd": 0.0009,
           "factor": "output",
-          "gain_share": 0.002
+          "gain_share": 0.0017
         },
         {
           "name": "int_per90",
-          "mean_abs_shap": 0.0117,
-          "perm_r2_drop": 0.0006,
+          "mean_abs_shap": 0.0104,
+          "perm_r2_drop": 0.0003,
           "perm_r2_drop_sd": 0.0005,
           "factor": "output",
-          "gain_share": 0.0055
+          "gain_share": 0.0046
         },
         {
           "name": "clr_per90",
-          "mean_abs_shap": 0.01,
-          "perm_r2_drop": 0.0003,
-          "perm_r2_drop_sd": 0.0012,
+          "mean_abs_shap": 0.0095,
+          "perm_r2_drop": 0.0004,
+          "perm_r2_drop_sd": 0.0015,
           "factor": "output",
-          "gain_share": 0.0058
+          "gain_share": 0.0053
         },
         {
           "name": "blk_per90",
-          "mean_abs_shap": 0.0079,
-          "perm_r2_drop": 0.0004,
-          "perm_r2_drop_sd": 0.0005,
+          "mean_abs_shap": 0.0083,
+          "perm_r2_drop": 0.0001,
+          "perm_r2_drop_sd": 0.0006,
           "factor": "output",
-          "gain_share": 0.0055
+          "gain_share": 0.0054
         },
         {
           "name": "tkl_per90",
-          "mean_abs_shap": 0.0076,
-          "perm_r2_drop": 0.0006,
-          "perm_r2_drop_sd": 0.0006,
+          "mean_abs_shap": 0.0069,
+          "perm_r2_drop": 0.0008,
+          "perm_r2_drop_sd": 0.0005,
           "factor": "output",
-          "gain_share": 0.0057
+          "gain_share": 0.0052
         },
         {
           "name": "psxg_net_per90",
-          "mean_abs_shap": 0.0032,
+          "mean_abs_shap": 0.003,
           "perm_r2_drop": 0.0005,
-          "perm_r2_drop_sd": 0.0006,
+          "perm_r2_drop_sd": 0.0005,
           "factor": "output",
-          "gain_share": 0.0015
+          "gain_share": 0.0011
         },
         {
           "name": "adv_seasons_ago",
-          "mean_abs_shap": 0.0027,
-          "perm_r2_drop": -0.0002,
+          "mean_abs_shap": 0.0025,
+          "perm_r2_drop": -0.0003,
           "perm_r2_drop_sd": 0.0005,
           "factor": "coverage",
-          "gain_share": 0.001
+          "gain_share": 0.0009
         },
         {
           "name": "has_advanced",
-          "mean_abs_shap": 0.0002,
-          "perm_r2_drop": 0.0,
-          "perm_r2_drop_sd": 0.0001,
+          "mean_abs_shap": 0.0,
+          "perm_r2_drop": -0.0,
+          "perm_r2_drop_sd": 0.0,
           "factor": "coverage",
           "gain_share": 0.0
         }
@@ -622,302 +622,302 @@
       "factors": [
         {
           "name": "age",
-          "mean_abs_shap": 0.4291,
-          "perm_r2_drop": 0.6294,
-          "perm_r2_drop_sd": 0.0669,
-          "gain_share": 0.2889
+          "mean_abs_shap": 0.4465,
+          "perm_r2_drop": 0.6572,
+          "perm_r2_drop_sd": 0.0697,
+          "gain_share": 0.3269
         },
         {
           "name": "club",
-          "mean_abs_shap": 0.3056,
-          "perm_r2_drop": 0.2621,
-          "perm_r2_drop_sd": 0.0192,
-          "gain_share": 0.2787
+          "mean_abs_shap": 0.3082,
+          "perm_r2_drop": 0.2673,
+          "perm_r2_drop_sd": 0.0194,
+          "gain_share": 0.2772
         },
         {
           "name": "experience",
-          "mean_abs_shap": 0.2274,
-          "perm_r2_drop": 0.1837,
-          "perm_r2_drop_sd": 0.0182,
-          "gain_share": 0.0829
+          "mean_abs_shap": 0.2312,
+          "perm_r2_drop": 0.1893,
+          "perm_r2_drop_sd": 0.0192,
+          "gain_share": 0.088
         },
         {
           "name": "league",
-          "mean_abs_shap": 0.169,
-          "perm_r2_drop": 0.0993,
-          "perm_r2_drop_sd": 0.0128,
-          "gain_share": 0.0865
+          "mean_abs_shap": 0.167,
+          "perm_r2_drop": 0.0955,
+          "perm_r2_drop_sd": 0.0121,
+          "gain_share": 0.0841
         },
         {
           "name": "output",
-          "mean_abs_shap": 0.1339,
-          "perm_r2_drop": 0.0636,
-          "perm_r2_drop_sd": 0.0027,
-          "gain_share": 0.1174
+          "mean_abs_shap": 0.1304,
+          "perm_r2_drop": 0.064,
+          "perm_r2_drop_sd": 0.0032,
+          "gain_share": 0.1081
         },
         {
           "name": "coverage",
-          "mean_abs_shap": 0.1213,
-          "perm_r2_drop": 0.0668,
-          "perm_r2_drop_sd": 0.0107,
-          "gain_share": 0.0555
+          "mean_abs_shap": 0.1209,
+          "perm_r2_drop": 0.0667,
+          "perm_r2_drop_sd": 0.0058,
+          "gain_share": 0.0508
         },
         {
           "name": "contract",
-          "mean_abs_shap": 0.0831,
-          "perm_r2_drop": 0.018,
-          "perm_r2_drop_sd": 0.0012,
-          "gain_share": 0.0532
+          "mean_abs_shap": 0.078,
+          "perm_r2_drop": 0.0166,
+          "perm_r2_drop_sd": 0.0019,
+          "gain_share": 0.0337
         },
         {
           "name": "international",
-          "mean_abs_shap": 0.0672,
-          "perm_r2_drop": 0.0188,
-          "perm_r2_drop_sd": 0.0026,
-          "gain_share": 0.0333
+          "mean_abs_shap": 0.0646,
+          "perm_r2_drop": 0.0179,
+          "perm_r2_drop_sd": 0.0037,
+          "gain_share": 0.0278
         },
         {
           "name": "position",
-          "mean_abs_shap": 0.0193,
-          "perm_r2_drop": 0.0026,
-          "perm_r2_drop_sd": 0.001,
-          "gain_share": 0.0036
+          "mean_abs_shap": 0.0186,
+          "perm_r2_drop": 0.0024,
+          "perm_r2_drop_sd": 0.0006,
+          "gain_share": 0.0035
         }
       ],
       "n_features": 37,
-      "oof_r2_log": 0.859
+      "oof_r2_log": 0.858
     },
     "B_full": {
       "features": [
         {
           "name": "age_clean",
-          "mean_abs_shap": 0.4682,
-          "perm_r2_drop": 0.6964,
-          "perm_r2_drop_sd": 0.0562,
+          "mean_abs_shap": 0.456,
+          "perm_r2_drop": 0.6812,
+          "perm_r2_drop_sd": 0.0517,
           "factor": "age",
-          "gain_share": 0.3296
+          "gain_share": 0.3096
         },
         {
           "name": "min",
-          "mean_abs_shap": 0.2367,
-          "perm_r2_drop": 0.1966,
-          "perm_r2_drop_sd": 0.014,
+          "mean_abs_shap": 0.2377,
+          "perm_r2_drop": 0.1955,
+          "perm_r2_drop_sd": 0.0128,
           "factor": "experience",
-          "gain_share": 0.0907
+          "gain_share": 0.0906
         },
         {
           "name": "club_goals_pm",
-          "mean_abs_shap": 0.2309,
-          "perm_r2_drop": 0.1411,
-          "perm_r2_drop_sd": 0.0142,
+          "mean_abs_shap": 0.2265,
+          "perm_r2_drop": 0.1324,
+          "perm_r2_drop_sd": 0.0139,
           "factor": "club",
-          "gain_share": 0.1675
+          "gain_share": 0.1623
         },
         {
           "name": "league",
-          "mean_abs_shap": 0.169,
-          "perm_r2_drop": 0.0994,
-          "perm_r2_drop_sd": 0.007,
+          "mean_abs_shap": 0.1632,
+          "perm_r2_drop": 0.094,
+          "perm_r2_drop_sd": 0.008,
           "factor": "league",
-          "gain_share": 0.0902
+          "gain_share": 0.0839
         },
         {
           "name": "club_caps",
-          "mean_abs_shap": 0.135,
-          "perm_r2_drop": 0.0492,
-          "perm_r2_drop_sd": 0.0099,
+          "mean_abs_shap": 0.1428,
+          "perm_r2_drop": 0.0518,
+          "perm_r2_drop_sd": 0.0064,
           "factor": "club",
-          "gain_share": 0.1111
+          "gain_share": 0.1226
         },
         {
           "name": "contract_years_left",
-          "mean_abs_shap": 0.0915,
-          "perm_r2_drop": 0.0211,
-          "perm_r2_drop_sd": 0.0016,
+          "mean_abs_shap": 0.0962,
+          "perm_r2_drop": 0.0217,
+          "perm_r2_drop_sd": 0.0018,
           "factor": "contract",
-          "gain_share": 0.0458
+          "gain_share": 0.055
         },
         {
           "name": "international_caps",
-          "mean_abs_shap": 0.0655,
-          "perm_r2_drop": 0.0186,
-          "perm_r2_drop_sd": 0.0031,
+          "mean_abs_shap": 0.0671,
+          "perm_r2_drop": 0.0185,
+          "perm_r2_drop_sd": 0.0036,
           "factor": "international",
-          "gain_share": 0.0315
+          "gain_share": 0.035
         },
         {
           "name": "gls_per90",
-          "mean_abs_shap": 0.0596,
-          "perm_r2_drop": 0.0185,
-          "perm_r2_drop_sd": 0.0034,
+          "mean_abs_shap": 0.0619,
+          "perm_r2_drop": 0.0177,
+          "perm_r2_drop_sd": 0.0036,
           "factor": "output",
-          "gain_share": 0.0184
+          "gain_share": 0.0202
         },
         {
           "name": "saves_per90",
-          "mean_abs_shap": 0.0425,
-          "perm_r2_drop": 0.0109,
-          "perm_r2_drop_sd": 0.0017,
+          "mean_abs_shap": 0.0418,
+          "perm_r2_drop": 0.0111,
+          "perm_r2_drop_sd": 0.0018,
           "factor": "output",
-          "gain_share": 0.0066
+          "gain_share": 0.0067
         },
         {
           "name": "position",
-          "mean_abs_shap": 0.0267,
+          "mean_abs_shap": 0.0266,
           "perm_r2_drop": 0.0037,
-          "perm_r2_drop_sd": 0.0015,
+          "perm_r2_drop_sd": 0.001,
           "factor": "position",
-          "gain_share": 0.0053
+          "gain_share": 0.005
         },
         {
           "name": "ast_per90",
-          "mean_abs_shap": 0.0264,
+          "mean_abs_shap": 0.026,
           "perm_r2_drop": 0.0023,
-          "perm_r2_drop_sd": 0.0013,
+          "perm_r2_drop_sd": 0.0023,
           "factor": "output",
-          "gain_share": 0.0112
+          "gain_share": 0.0104
+        },
+        {
+          "name": "xg_per90",
+          "mean_abs_shap": 0.023,
+          "perm_r2_drop": 0.0017,
+          "perm_r2_drop_sd": 0.003,
+          "factor": "output",
+          "gain_share": 0.0132
         },
         {
           "name": "xag_per90",
-          "mean_abs_shap": 0.0237,
+          "mean_abs_shap": 0.0216,
           "perm_r2_drop": 0.0028,
-          "perm_r2_drop_sd": 0.0018,
+          "perm_r2_drop_sd": 0.0014,
+          "factor": "output",
+          "gain_share": 0.0107
+        },
+        {
+          "name": "tkl_per90",
+          "mean_abs_shap": 0.0185,
+          "perm_r2_drop": 0.0014,
+          "perm_r2_drop_sd": 0.0005,
+          "factor": "output",
+          "gain_share": 0.0109
+        },
+        {
+          "name": "clr_per90",
+          "mean_abs_shap": 0.0179,
+          "perm_r2_drop": 0.0012,
+          "perm_r2_drop_sd": 0.0017,
+          "factor": "output",
+          "gain_share": 0.0109
+        },
+        {
+          "name": "sh_per90",
+          "mean_abs_shap": 0.0175,
+          "perm_r2_drop": 0.0006,
+          "perm_r2_drop_sd": 0.0011,
           "factor": "output",
           "gain_share": 0.0113
         },
         {
-          "name": "xg_per90",
-          "mean_abs_shap": 0.0234,
-          "perm_r2_drop": 0.001,
-          "perm_r2_drop_sd": 0.0021,
-          "factor": "output",
-          "gain_share": 0.0123
-        },
-        {
-          "name": "clr_per90",
-          "mean_abs_shap": 0.019,
-          "perm_r2_drop": 0.0024,
-          "perm_r2_drop_sd": 0.0018,
-          "factor": "output",
-          "gain_share": 0.0097
-        },
-        {
           "name": "sot_per90",
-          "mean_abs_shap": 0.0189,
-          "perm_r2_drop": 0.0024,
-          "perm_r2_drop_sd": 0.001,
+          "mean_abs_shap": 0.0173,
+          "perm_r2_drop": 0.0009,
+          "perm_r2_drop_sd": 0.0015,
           "factor": "output",
-          "gain_share": 0.0102
-        },
-        {
-          "name": "tkl_per90",
-          "mean_abs_shap": 0.0179,
-          "perm_r2_drop": 0.0016,
-          "perm_r2_drop_sd": 0.0002,
-          "factor": "output",
-          "gain_share": 0.0099
+          "gain_share": 0.0107
         },
         {
           "name": "int_per90",
-          "mean_abs_shap": 0.0172,
-          "perm_r2_drop": 0.0024,
-          "perm_r2_drop_sd": 0.0008,
+          "mean_abs_shap": 0.0171,
+          "perm_r2_drop": 0.0011,
+          "perm_r2_drop_sd": 0.0011,
           "factor": "output",
-          "gain_share": 0.0079
+          "gain_share": 0.0087
         },
         {
           "name": "blk_per90",
-          "mean_abs_shap": 0.0168,
-          "perm_r2_drop": 0.001,
-          "perm_r2_drop_sd": 0.0009,
+          "mean_abs_shap": 0.0164,
+          "perm_r2_drop": 0.0018,
+          "perm_r2_drop_sd": 0.0006,
           "factor": "output",
-          "gain_share": 0.0098
-        },
-        {
-          "name": "sh_per90",
-          "mean_abs_shap": 0.0143,
-          "perm_r2_drop": 0.001,
-          "perm_r2_drop_sd": 0.0014,
-          "factor": "output",
-          "gain_share": 0.0093
+          "gain_share": 0.009
         },
         {
           "name": "aer_won_per90",
-          "mean_abs_shap": 0.0129,
-          "perm_r2_drop": 0.0016,
-          "perm_r2_drop_sd": 0.0012,
+          "mean_abs_shap": 0.0133,
+          "perm_r2_drop": 0.0014,
+          "perm_r2_drop_sd": 0.0008,
           "factor": "output",
-          "gain_share": 0.0101
+          "gain_share": 0.0114
         },
         {
           "name": "psxg_net_per90",
-          "mean_abs_shap": 0.004,
-          "perm_r2_drop": 0.0008,
-          "perm_r2_drop_sd": 0.0007,
+          "mean_abs_shap": 0.0042,
+          "perm_r2_drop": 0.0009,
+          "perm_r2_drop_sd": 0.0006,
           "factor": "output",
-          "gain_share": 0.0017
+          "gain_share": 0.0019
         }
       ],
       "factors": [
         {
           "name": "age",
-          "mean_abs_shap": 0.4682,
-          "perm_r2_drop": 0.6897,
-          "perm_r2_drop_sd": 0.0709,
-          "gain_share": 0.3296
+          "mean_abs_shap": 0.456,
+          "perm_r2_drop": 0.6712,
+          "perm_r2_drop_sd": 0.0692,
+          "gain_share": 0.3096
         },
         {
           "name": "club",
-          "mean_abs_shap": 0.3022,
-          "perm_r2_drop": 0.2435,
-          "perm_r2_drop_sd": 0.0205,
-          "gain_share": 0.2786
+          "mean_abs_shap": 0.3048,
+          "perm_r2_drop": 0.2429,
+          "perm_r2_drop_sd": 0.0223,
+          "gain_share": 0.2849
         },
         {
           "name": "experience",
-          "mean_abs_shap": 0.2367,
-          "perm_r2_drop": 0.1964,
-          "perm_r2_drop_sd": 0.0183,
-          "gain_share": 0.0907
+          "mean_abs_shap": 0.2377,
+          "perm_r2_drop": 0.1942,
+          "perm_r2_drop_sd": 0.0199,
+          "gain_share": 0.0906
         },
         {
           "name": "league",
-          "mean_abs_shap": 0.169,
-          "perm_r2_drop": 0.1051,
-          "perm_r2_drop_sd": 0.0077,
-          "gain_share": 0.0902
+          "mean_abs_shap": 0.1632,
+          "perm_r2_drop": 0.0986,
+          "perm_r2_drop_sd": 0.0103,
+          "gain_share": 0.0839
         },
         {
           "name": "output",
-          "mean_abs_shap": 0.1507,
-          "perm_r2_drop": 0.0786,
-          "perm_r2_drop_sd": 0.006,
-          "gain_share": 0.1284
+          "mean_abs_shap": 0.151,
+          "perm_r2_drop": 0.0761,
+          "perm_r2_drop_sd": 0.0038,
+          "gain_share": 0.1359
         },
         {
           "name": "contract",
-          "mean_abs_shap": 0.0915,
-          "perm_r2_drop": 0.0242,
-          "perm_r2_drop_sd": 0.0017,
-          "gain_share": 0.0458
+          "mean_abs_shap": 0.0962,
+          "perm_r2_drop": 0.0249,
+          "perm_r2_drop_sd": 0.0012,
+          "gain_share": 0.055
         },
         {
           "name": "international",
-          "mean_abs_shap": 0.0655,
-          "perm_r2_drop": 0.0196,
-          "perm_r2_drop_sd": 0.0048,
-          "gain_share": 0.0315
+          "mean_abs_shap": 0.0671,
+          "perm_r2_drop": 0.0198,
+          "perm_r2_drop_sd": 0.0035,
+          "gain_share": 0.035
         },
         {
           "name": "position",
-          "mean_abs_shap": 0.0267,
+          "mean_abs_shap": 0.0266,
           "perm_r2_drop": 0.0042,
-          "perm_r2_drop_sd": 0.0012,
-          "gain_share": 0.0053
+          "perm_r2_drop_sd": 0.0013,
+          "gain_share": 0.005
         }
       ],
       "n_features": 32,
-      "oof_r2_log": 0.833
+      "oof_r2_log": 0.831
     }
   }
 }
